@@ -169,7 +169,8 @@ io.on("connection", (socket) => {
   });
 });
 
-httpServer.listen(PORT, () => {
+httpServer.listen(PORT, "0.0.0.0", () => {
   console.log(`Terminal server at http://localhost:${PORT}`);
+  console.log(`Listening on 0.0.0.0 for Tailscale access`);
   console.log(`Working directory: ${WORKSPACE_CWD}`);
 });
