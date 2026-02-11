@@ -1,0 +1,16 @@
+{
+  "name": "terminal-pty",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper 2>/dev/null || chmod +x node_modules/node-pty/prebuilds/darwin-x64/spawn-helper 2>/dev/null || true",
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "node-pty": "^1.0.0",
+    "socket.io": "^4.8.1"
+  }
+}
