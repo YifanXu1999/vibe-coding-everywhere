@@ -396,38 +396,24 @@ export function useSocket(options: UseSocketOptions = {}) {
     setWaitingForUserInput(false);
   }, []);
 
-  /** Submit selected answers for AskUserQuestion tool and send to backend. */
+  /** Submit selected answers for AskUserQuestion: run claude -p -c "[option]" stream-json --verbose (replace current run with new run using selection as prompt). */
   const submitAskQuestionAnswer = useCallback(
     (answers: Array<{ header: string; selected: string[] }>) => {
       const pending = pendingAskQuestion;
       const summary = answers.map((a) => `${a.header}: ${a.selected.join(", ")}`).join("; ");
-      // Always add user message so the user sees their choice in the chat, even if we can't send to backend
       addMessage("user", summary);
       setPendingAskQuestion(null);
       setWaitingForUserInput(false);
 
-      if (!pending || !socketRef.current) return;
-      // Always send to server so the CLI can continue (if it's still running). We used to require claudeRunning, but the process may have emitted "exit" before the user confirms, which would prevent us from ever sending and getting a follow-up.
-      // Claude CLI with stream-json expects a "user" message with tool_result content (same format it outputs). Use newline as line terminator (JSON lines / stream-json convention).
-      const toolResultContent = summary;
-      const streamPayload = {
-        type: "user",
-        message: {
-          role: "user" as const,
-          content: [
-            {
-              type: "tool_result" as const,
-              tool_use_id: pending.tool_use_id,
-              content: toolResultContent,
-            },
-          ],
-        },
-        ...(pending.uuid != null && { uuid: pending.uuid }),
-      };
-      const json = JSON.stringify(streamPayload);
-      socketRef.current.emit("input", json + "\n");
+      if (!socketRef.current) return;
+      socketRef.current.emit("submit-prompt", {
+        prompt: summary,
+        replaceRunning: true,
+        permissionMode: lastRunOptions.permissionMode ?? undefined,
+        allowedTools: lastRunOptions.allowedTools ?? [],
+      });
     },
-    [pendingAskQuestion, addMessage]
+    [pendingAskQuestion, addMessage, lastRunOptions]
   );
 
   const runRenderCommand = useCallback((command: string, url: string) => {

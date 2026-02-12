@@ -1,5 +1,6 @@
 import React from "react";
-import { View, Text, StyleSheet } from "react-native";
+import { View, Text, StyleSheet, Linking } from "react-native";
+import Markdown from "react-native-markdown-display";
 import { theme } from "../theme";
 import type { Message } from "../hooks/useSocket";
 
@@ -29,16 +30,35 @@ export function MessageBubble({ message, isTerminatedLabel }: MessageBubbleProps
       )}
       <View style={[styles.bubble, isUser && styles.bubbleUser, isSystem && styles.bubbleSystem]}>
         {message.content ? (
-          <Text
-            style={[
-              styles.bubbleText,
-              isSystem && styles.bubbleTextSystem,
-              isTerminatedLabel && styles.bubbleTextTerminated,
-            ]}
-            selectable={!isTerminatedLabel}
-          >
-            {message.content}
-          </Text>
+          isTerminatedLabel ? (
+            <Text
+              style={[styles.bubbleText, styles.bubbleTextTerminated]}
+              selectable={false}
+            >
+              {message.content}
+            </Text>
+          ) : isUser || isSystem ? (
+            <Text
+              style={[
+                styles.bubbleText,
+                isSystem && styles.bubbleTextSystem,
+              ]}
+              selectable
+            >
+              {message.content}
+            </Text>
+          ) : (
+            <Markdown
+              style={markdownStyles}
+              mergeStyle
+              onLinkPress={(url) => {
+                Linking.openURL(url);
+                return false;
+              }}
+            >
+              {message.content}
+            </Markdown>
+          )
         ) : null}
         {refs.length > 0 && (
           <View style={[styles.refPills, message.content ? styles.refPillsWithContent : null]}>
@@ -61,6 +81,23 @@ export function MessageBubble({ message, isTerminatedLabel }: MessageBubbleProps
     </View>
   );
 }
+
+const markdownStyles = {
+  body: { color: theme.textPrimary },
+  text: { fontSize: 15, lineHeight: 22, color: theme.textPrimary },
+  paragraph: { marginTop: 6, marginBottom: 6 },
+  heading1: { fontSize: 20 },
+  heading2: { fontSize: 18 },
+  heading3: { fontSize: 16 },
+  heading4: { fontSize: 15 },
+  heading5: { fontSize: 14 },
+  heading6: { fontSize: 13 },
+  link: { color: theme.accent, textDecorationLine: "underline" },
+  code_inline: { backgroundColor: "#f0ebe4", color: theme.textPrimary },
+  code_block: { backgroundColor: "#f0ebe4", color: theme.textPrimary },
+  fence: { backgroundColor: "#f0ebe4", color: theme.textPrimary },
+  blockquote: { backgroundColor: "#f5f0ea", borderColor: theme.borderColor },
+};
 
 const styles = StyleSheet.create({
   row: {

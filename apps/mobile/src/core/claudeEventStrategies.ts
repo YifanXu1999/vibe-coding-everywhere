@@ -134,7 +134,6 @@ export function createClaudeEventDispatcher(ctx: ClaudeEventContext): (data: Rec
         if (pending) {
           ctx.setPendingAskQuestion(pending);
           ctx.setWaitingForUserInput(true);
-          ctx.addMessage("system", "Please select your choices below and confirm.");
         }
       }
     }
@@ -143,7 +142,6 @@ export function createClaudeEventDispatcher(ctx: ClaudeEventContext): (data: Rec
       if (pending) {
         ctx.setPendingAskQuestion(pending);
         ctx.setWaitingForUserInput(true);
-        ctx.addMessage("system", "Please select your choices below and confirm.");
       }
       return;
     }

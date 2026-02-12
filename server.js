@@ -462,6 +462,20 @@ io.on("connection", (socket) => {
       emitError(socket, "Prompt cannot be empty.");
       return;
     }
+    const replaceRunning = !!payload?.replaceRunning;
+    if (replaceRunning && (ptyProcess || mockReplayActive)) {
+      if (ptyProcess) {
+        ptyProcess.kill();
+        ptyProcess = null;
+      }
+      if (mockReplayCancel) {
+        mockReplayCancel();
+        mockReplayCancel = null;
+      }
+      mockReplayActive = false;
+      hasCompletedFirstRun = true;
+      socket.emit("exit", { exitCode: 0 });
+    }
     console.log("[submit-prompt] chat input (user prompt):", prompt);
     const permissionMode =
       typeof payload?.permissionMode === "string" && payload.permissionMode.trim()
