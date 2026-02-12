@@ -12,7 +12,7 @@ import {
 } from "react-native";
 import { Image } from "expo-image";
 import { theme } from "../theme";
-import { getServerBaseUrl } from "../utils/serverUrl";
+import { getDefaultServerConfig } from "../core";
 
 export type TreeItem = {
   name: string;
@@ -66,7 +66,7 @@ export function WorkspaceSidebar({ visible, embedded, onClose, onFileSelect }: W
   const [refreshIntervalMs, setRefreshIntervalMs] = useState(DEFAULT_REFRESH_MS);
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set([""]));
 
-  const baseUrl = getServerBaseUrl();
+  const baseUrl = getDefaultServerConfig().getBaseUrl();
   const drawerWidth = windowWidth - 2 * SIDE_MARGIN;
   const maxDrawerHeight = Math.round(windowHeight * 0.75);
   const drawerHeight =

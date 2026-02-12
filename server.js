@@ -8,8 +8,37 @@ import fs from "fs";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const WORKSPACE_CWD = __dirname;
 const PORT = process.env.PORT || 3456;
+
+/** Resolve workspace directory from CLI or env. Defaults to server directory. */
+function getWorkspaceCwd() {
+  const args = process.argv.slice(2);
+  let fromCli = null;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--workspace" && args[i + 1]) {
+      fromCli = args[i + 1];
+      break;
+    }
+    if (!args[i].startsWith("-")) {
+      fromCli = args[i];
+      break;
+    }
+  }
+  const raw = fromCli ?? process.env.WORKSPACE ?? process.env.WORKSPACE_CWD ?? __dirname;
+  const resolved = path.resolve(raw);
+  if (!fs.existsSync(resolved)) {
+    console.warn(`[workspace] Path does not exist: ${resolved}. Using server directory.`);
+    return __dirname;
+  }
+  const stat = fs.statSync(resolved);
+  if (!stat.isDirectory()) {
+    console.warn(`[workspace] Not a directory: ${resolved}. Using server directory.`);
+    return __dirname;
+  }
+  return resolved;
+}
+
+const WORKSPACE_CWD = getWorkspaceCwd();
 const SIDEBAR_REFRESH_INTERVAL_MS = parseInt(process.env.SIDEBAR_REFRESH_INTERVAL_MS || "3000", 10) || 3000;
 // Default permission mode when client does not send one (e.g. bypassPermissions = allow all for testing)
 const DEFAULT_PERMISSION_MODE = process.env.DEFAULT_PERMISSION_MODE || "bypassPermissions";

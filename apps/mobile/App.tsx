@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect } from "react";
+import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import {
   View,
   Text,
@@ -26,11 +26,21 @@ import { PreviewWebViewModal } from "./src/components/PreviewWebViewModal";
 import { RunOutputView } from "./src/components/RunOutputView";
 import { WorkspaceSidebar } from "./src/components/WorkspaceSidebar";
 import { FileViewerModal, type CodeRefPayload } from "./src/components/FileViewerModal";
-import { resolvePreviewUrl, getServerBaseUrl } from "./src/utils/serverUrl";
+import {
+  getDefaultServerConfig,
+  createWorkspaceFileService,
+  getTerminalInputState,
+} from "./src/core";
 import { theme } from "./src/theme";
 
 export default function App() {
-  // Default bypassPermissions for testing (allow all); set EXPO_PUBLIC_DEFAULT_PERMISSION_MODE to override
+  // DI: default implementations; can be replaced via context or props for tests.
+  const serverConfig = useMemo(() => getDefaultServerConfig(), []);
+  const workspaceFileService = useMemo(
+    () => createWorkspaceFileService(serverConfig),
+    [serverConfig]
+  );
+
   const defaultPermissionMode =
     (typeof process !== "undefined" && process.env?.EXPO_PUBLIC_DEFAULT_PERMISSION_MODE) || "bypassPermissions";
   const [permissionMode, setPermissionMode] = useState<string | null>(defaultPermissionMode);
@@ -107,27 +117,11 @@ export default function App() {
     setFileError(null);
     setFileContent(null);
     setFileIsImage(false);
-    const baseUrl = getServerBaseUrl();
-    const url = `${baseUrl}/api/workspace-file?path=${encodeURIComponent(selectedFilePath)}`;
-    fetch(url)
-      .then(async (res) => {
-        const text = await res.text();
-        if (!res.ok) {
-          let errMsg = res.statusText;
-          try {
-            const b = JSON.parse(text);
-            if (b?.error && typeof b.error === "string") errMsg = b.error;
-          } catch (_) {}
-          throw new Error(errMsg);
-        }
-        return text;
-      })
-      .then((text) => {
-        const data = JSON.parse(text) as { path?: string; content?: string; isImage?: boolean };
-        const raw = data?.content;
-        const content = typeof raw === "string" ? raw : raw != null ? String(raw) : null;
+    workspaceFileService
+      .fetchFile(selectedFilePath)
+      .then(({ content, isImage }) => {
         setFileContent(content);
-        setFileIsImage(data?.isImage === true);
+        setFileIsImage(isImage);
         setFileLoading(false);
       })
       .catch((err) => {
@@ -172,7 +166,7 @@ export default function App() {
   );
 
   const handleOpenPreviewInApp = useCallback((u: string) => {
-    if (u) setPreviewUrl(resolvePreviewUrl(u));
+    if (u) setPreviewUrl(serverConfig.resolvePreviewUrl(u));
   }, []);
 
   const handleClosePreview = useCallback(() => {
@@ -438,10 +432,13 @@ export default function App() {
                           : undefined
                       }
                     />
-                    {selectedTerminalId && (() => {
-                      const sel = terminals.find((t) => t.id === selectedTerminalId);
-                      const runningNoInput = !!(sel?.active && sel?.isSingleCommand);
-                      if (runningNoInput) {
+                    {(() => {
+                      const inputState = getTerminalInputState(
+                        selectedTerminalId,
+                        terminals,
+                        canRunInSelectedTerminal
+                      );
+                      if (inputState === "disabled") {
                         return (
                           <View style={styles.terminalCommandDisabledHint}>
                             <Text style={styles.terminalCommandDisabledText}>
@@ -450,36 +447,36 @@ export default function App() {
                           </View>
                         );
                       }
-                      if (!canRunInSelectedTerminal) return null;
+                      if (inputState !== "enabled") return null;
                       return (
-                      <View style={styles.terminalCommandRow}>
-                        <TextInput
-                          style={styles.terminalCommandInput}
-                          placeholder="Type a command…"
-                          placeholderTextColor={theme.textMuted}
-                          value={terminalCommandInput}
-                          onChangeText={setTerminalCommandInput}
-                          onSubmitEditing={() => {
-                            if (terminalCommandInput.trim()) {
-                              runUserCommand(terminalCommandInput.trim());
-                              setTerminalCommandInput("");
-                            }
-                          }}
-                          returnKeyType="send"
-                        />
-                        <TouchableOpacity
-                          style={styles.terminalCommandRunButton}
-                          onPress={() => {
-                            if (terminalCommandInput.trim()) {
-                              runUserCommand(terminalCommandInput.trim());
-                              setTerminalCommandInput("");
-                            }
-                          }}
-                          activeOpacity={0.8}
-                        >
-                          <Text style={styles.terminalCommandRunText}>Run</Text>
-                        </TouchableOpacity>
-                      </View>
+                        <View style={styles.terminalCommandRow}>
+                          <TextInput
+                            style={styles.terminalCommandInput}
+                            placeholder="Type a command…"
+                            placeholderTextColor={theme.textMuted}
+                            value={terminalCommandInput}
+                            onChangeText={setTerminalCommandInput}
+                            onSubmitEditing={() => {
+                              if (terminalCommandInput.trim()) {
+                                runUserCommand(terminalCommandInput.trim());
+                                setTerminalCommandInput("");
+                              }
+                            }}
+                            returnKeyType="send"
+                          />
+                          <TouchableOpacity
+                            style={styles.terminalCommandRunButton}
+                            onPress={() => {
+                              if (terminalCommandInput.trim()) {
+                                runUserCommand(terminalCommandInput.trim());
+                                setTerminalCommandInput("");
+                              }
+                            }}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={styles.terminalCommandRunText}>Run</Text>
+                          </TouchableOpacity>
+                        </View>
                       );
                     })()}
                   </View>

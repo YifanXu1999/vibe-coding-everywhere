@@ -7,60 +7,23 @@ import {
   isClaudeStream,
   getAllowedToolsFromDenials,
 } from "../utils/claudeStream";
+import type {
+  Message,
+  CodeReference,
+  PendingRender,
+  PermissionDenial,
+  LastRunOptions,
+  TerminalState,
+  IServerConfig,
+} from "../core/types";
+import { getDefaultServerConfig } from "../core/serverConfig";
+import { createClaudeEventDispatcher } from "../core/claudeEventStrategies";
 
-/** Code reference for display: show file name + lines instead of full code in chat. */
-export type CodeReference = {
-  path: string;
-  startLine: number;
-  endLine: number;
-};
-
-export type Message = {
-  id: string;
-  role: "user" | "assistant" | "system";
-  content: string;
-  /** When present, show these as filename (lines) pills instead of inline code (user messages). */
-  codeReferences?: CodeReference[];
-};
-
-export type PendingRender = {
-  command: string;
-  url: string;
-};
-
-export type PermissionDenial = {
-  tool_name?: string;
-  tool?: string;
-  tool_input?: { file_path?: string; path?: string };
-};
-
-export type LastRunOptions = {
-  permissionMode: string | null;
-  allowedTools: string[];
-  useContinue: boolean;
-};
-
-export type TerminalState = {
-  id: string;
-  pid: number | null;
-  lines: { type: "stdout" | "stderr"; text: string }[];
-  lastCommand: string | null;
-  active: boolean;
-  /** True when terminal was started by run-render-command (one process); disable input while it is running. */
-  isSingleCommand: boolean;
-};
-
-const getServerUrl = (): string => {
-  const url = process.env.EXPO_PUBLIC_SERVER_URL;
-  if (url) return url;
-  return "http://localhost:3456";
-};
+// Re-export types for consumers that import from useSocket
+export type { Message, CodeReference, PendingRender, PermissionDenial, LastRunOptions, TerminalState };
 
 /** Normalize path to forward slashes and, if workspace root is set, to relative path. */
-function toWorkspaceRelativePath(
-  filePath: string,
-  workspaceRoot: string | null
-): string {
+function toWorkspaceRelativePath(filePath: string, workspaceRoot: string | null): string {
   const normalized = filePath.replace(/\\/g, "/").trim();
   if (!workspaceRoot) return normalized;
   const root = workspaceRoot.replace(/\\/g, "/").replace(/\/$/, "");
@@ -69,7 +32,15 @@ function toWorkspaceRelativePath(
   return rel || normalized;
 }
 
-export function useSocket() {
+export interface UseSocketOptions {
+  /** Injected server config (base URL). Defaults to env-based config. */
+  serverConfig?: IServerConfig;
+}
+
+export function useSocket(options: UseSocketOptions = {}) {
+  const serverConfig = options.serverConfig ?? getDefaultServerConfig();
+  const serverUrl = serverConfig.getBaseUrl();
+
   const [connected, setConnected] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [claudeRunning, setClaudeRunning] = useState(false);
@@ -84,9 +55,7 @@ export function useSocket() {
   const [permissionDenials, setPermissionDenials] = useState<PermissionDenial[] | null>(null);
   const [modelName, setModelName] = useState("Sonnet 4.5");
   const [runRenderResult, setRunRenderResult] = useState<{ ok: boolean; message: string } | null>(null);
-  /** All terminal processes in this session. */
   const [terminals, setTerminals] = useState<TerminalState[]>([]);
-  /** ID of the terminal currently selected for viewing logs and input. */
   const [selectedTerminalId, setSelectedTerminalId] = useState<string | null>(null);
 
   const socketRef = useRef<Socket | null>(null);
@@ -95,7 +64,6 @@ export function useSocket() {
   const hasCompletedFirstRunRef = useRef(false);
   const nextIdRef = useRef(0);
   const workspaceRootRef = useRef<string | null>(null);
-  /** Command sent with run-render-command; used when run-render-started gives us terminalId. */
   const pendingRunCommandRef = useRef<string | null>(null);
 
   const addMessage = useCallback(
@@ -133,7 +101,6 @@ export function useSocket() {
     const raw = currentAssistantContentRef.current;
     const next = extractRenderCommandAndUrl(raw);
     setPendingRender(next);
-    // Strip trailing incomplete XML/HTML tag (e.g. "<u") at chat end
     const cleaned = stripTrailingIncompleteTag(raw ?? "");
     if (cleaned !== (raw ?? "")) {
       setMessages((prev) => {
@@ -147,7 +114,6 @@ export function useSocket() {
     }
   }, []);
 
-  /** Deduplicate denials by tool + path so we show at most one row per unique denial. */
   const deduplicateDenials = useCallback((denials: PermissionDenial[]): PermissionDenial[] => {
     const seen = new Set<string>();
     return denials.filter((d) => {
@@ -162,49 +128,16 @@ export function useSocket() {
 
   const handleClaudeEvent = useCallback(
     (data: Record<string, unknown>) => {
-      if (Array.isArray(data.permission_denials) && data.permission_denials.length) {
-        const list = data.permission_denials as PermissionDenial[];
-        setPermissionDenials(deduplicateDenials(list));
-        setPendingRender(null);
-      }
-
-      switch (data.type) {
-        case "system": {
-          const info: string[] = [];
-          if (data.session_id) info.push(`Session ID: ${data.session_id}`);
-          if (data.model) {
-            setModelName(String(data.model));
-            info.push(`Model: ${data.model}`);
-          }
-          if (data.cwd) info.push(`Working Directory: ${data.cwd}`);
-          if (info.length) console.log("[session]", info.join("\n"));
-          break;
-        }
-        case "assistant": {
-          const contents = (data.message as { content?: Array<{ type?: string; text?: string }> })?.content ?? [];
-          const parts = contents
-            .filter((c) => c.type === "text")
-            .map((c) => (c as { text?: string }).text ?? "")
-            .join("");
-          appendAssistantText(parts);
-          break;
-        }
-        case "input":
-        case "permission_request": {
-          const tool = (data.tool_name ?? data.tool ?? "Tool") as string;
-          const prompt =
-            (data.prompt ?? data.message ?? data.description ?? "Claude needs your input.") as string;
-          setWaitingForUserInput(true);
-          addMessage("system", `${tool} request:\n${prompt}\n(Type a response and press Enter)`);
-          break;
-        }
-        case "user":
-          break;
-        case "result":
-          break;
-        default:
-          if (typeof data === "string") appendAssistantText(`${data}\n`);
-      }
+      createClaudeEventDispatcher({
+        setPermissionDenials,
+        setPendingRender,
+        setModelName,
+        setWaitingForUserInput,
+        addMessage,
+        appendAssistantText,
+        getCurrentAssistantContent: () => currentAssistantContentRef.current,
+        deduplicateDenials,
+      })(data);
     },
     [addMessage, appendAssistantText, deduplicateDenials]
   );
@@ -229,13 +162,12 @@ export function useSocket() {
   );
 
   useEffect(() => {
-    const url = getServerUrl();
-    const socket = io(url, { transports: ["websocket", "polling"] });
+    const socket = io(serverUrl, { transports: ["websocket", "polling"] }) as Socket;
     socketRef.current = socket;
 
     socket.on("connect", () => {
       setConnected(true);
-      fetch(`${getServerUrl()}/api/workspace-path`)
+      fetch(`${serverUrl}/api/workspace-path`)
         .then((r) => r.json())
         .then((data: { path?: string }) => {
           if (typeof data?.path === "string") workspaceRootRef.current = data.path;
@@ -258,19 +190,22 @@ export function useSocket() {
       }
     });
 
-    socket.on("claude-started", (payload: { permissionMode?: string | null; allowedTools?: string[]; useContinue?: boolean }) => {
-      if (payload && typeof payload === "object") {
-        setLastRunOptions({
-          permissionMode: payload.permissionMode ?? null,
-          allowedTools: Array.isArray(payload.allowedTools) ? payload.allowedTools : [],
-          useContinue: !!payload.useContinue,
-        });
+    socket.on(
+      "claude-started",
+      (payload: { permissionMode?: string | null; allowedTools?: string[]; useContinue?: boolean }) => {
+        if (payload && typeof payload === "object") {
+          setLastRunOptions({
+            permissionMode: payload.permissionMode ?? null,
+            allowedTools: Array.isArray(payload.allowedTools) ? payload.allowedTools : [],
+            useContinue: !!payload.useContinue,
+          });
+        }
+        setClaudeRunning(true);
+        finalizeAssistantMessage();
+        setTypingIndicator(true);
+        setWaitingForUserInput(false);
       }
-      setClaudeRunning(true);
-      finalizeAssistantMessage();
-      setTypingIndicator(true);
-      setWaitingForUserInput(false);
-    });
+    );
 
     socket.on("exit", () => {
       hasCompletedFirstRunRef.current = true;
@@ -280,23 +215,26 @@ export function useSocket() {
       console.log("[session] Chat completed.");
     });
 
-    socket.on("run-render-started", ({ terminalId, pid }: { terminalId: string; pid?: number | null }) => {
-      const cmd = pendingRunCommandRef.current ?? "";
-      pendingRunCommandRef.current = null;
-      const isSingleCommand = cmd !== "";
-      setTerminals((prev) => [
-        ...prev,
-        {
-          id: terminalId,
-          pid: pid ?? null,
-          lines: cmd ? [{ type: "stdout" as const, text: `$ ${cmd}\n` }] : [],
-          lastCommand: cmd || null,
-          active: true,
-          isSingleCommand,
-        },
-      ]);
-      setSelectedTerminalId(terminalId);
-    });
+    socket.on(
+      "run-render-started",
+      ({ terminalId, pid }: { terminalId: string; pid?: number | null }) => {
+        const cmd = pendingRunCommandRef.current ?? "";
+        pendingRunCommandRef.current = null;
+        const isSingleCommand = cmd !== "";
+        setTerminals((prev) => [
+          ...prev,
+          {
+            id: terminalId,
+            pid: pid ?? null,
+            lines: cmd ? [{ type: "stdout" as const, text: `$ ${cmd}\n` }] : [],
+            lastCommand: cmd || null,
+            active: true,
+            isSingleCommand,
+          },
+        ]);
+        setSelectedTerminalId(terminalId);
+      }
+    );
     socket.on("run-render-stdout", ({ terminalId, chunk }: { terminalId: string; chunk: string }) => {
       setTerminals((prev) =>
         prev.map((t) =>
@@ -314,28 +252,31 @@ export function useSocket() {
     socket.on("run-render-exit", ({ terminalId }: { terminalId: string }) => {
       setTerminals((prev) => prev.map((t) => (t.id === terminalId ? { ...t, active: false } : t)));
     });
-    socket.on("run-render-result", ({
-      ok,
-      error,
-      terminalId,
-    }: { ok?: boolean; error?: string; terminalId?: string }) => {
-      if (ok) {
-        setRunRenderResult({ ok: true, message: "Command started. Open preview in app." });
-      } else {
-        if (error) setRunRenderResult({ ok: false, message: `Failed to run command: ${error}` });
-        setPendingRender(null);
-        if (terminalId) {
-          setTerminals((prev) => prev.map((t) => (t.id === terminalId ? { ...t, active: false } : t)));
+    socket.on(
+      "run-render-result",
+      ({
+        ok,
+        error,
+        terminalId,
+      }: { ok?: boolean; error?: string; terminalId?: string }) => {
+        if (ok) {
+          setRunRenderResult({ ok: true, message: "Command started. Open preview in app." });
+        } else {
+          if (error) setRunRenderResult({ ok: false, message: `Failed to run command: ${error}` });
+          setPendingRender(null);
+          if (terminalId) {
+            setTerminals((prev) => prev.map((t) => (t.id === terminalId ? { ...t, active: false } : t)));
+          }
         }
+        setTimeout(() => setRunRenderResult(null), 4000);
       }
-      setTimeout(() => setRunRenderResult(null), 4000);
-    });
+    );
 
     return () => {
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [handleRawLine, appendAssistantText, finalizeAssistantMessage, addMessage]);
+  }, [serverUrl, handleRawLine, appendAssistantText, finalizeAssistantMessage, addMessage]);
 
   const submitPrompt = useCallback(
     (
@@ -358,7 +299,6 @@ export function useSocket() {
 
       if (claudeRunning) return;
 
-      // Build full prompt: "Refer to the following files" line (paths relative to workspace), then user text, then code blocks
       const refsForDisplay: CodeReference[] = [];
       let fullPrompt: string;
       const workspaceRoot = workspaceRootRef.current;
@@ -388,11 +328,7 @@ export function useSocket() {
         permissionMode: permissionMode || undefined,
         allowedTools: allowedTools ?? [],
       });
-      addMessage(
-        "user",
-        prompt.trim(),
-        refsForDisplay.length ? refsForDisplay : undefined
-      );
+      addMessage("user", prompt.trim(), refsForDisplay.length ? refsForDisplay : undefined);
     },
     [waitingForUserInput, claudeRunning, addMessage]
   );
@@ -415,12 +351,10 @@ export function useSocket() {
     socketRef.current?.emit("run-render-command", { command: command.trim(), url });
   }, []);
 
-  /** Create a new interactive terminal (shell). Only creates when user clicks "New terminal". */
   const runNewTerminal = useCallback(() => {
     socketRef.current?.emit("run-render-new-terminal");
   }, []);
 
-  /** Run a user-typed command in the currently selected terminal (writes to its stdin). */
   const runUserCommand = useCallback(
     (command: string) => {
       const cmd = command.trim();
@@ -458,7 +392,6 @@ export function useSocket() {
     : terminals[terminals.length - 1] ?? null;
   const runOutputLines = selectedTerminal?.lines ?? [];
   const runCommand = selectedTerminal?.lastCommand ?? null;
-  /** True when user can type and Run in the selected terminal (active and not a single-command process still running). */
   const canRunInSelectedTerminal = (() => {
     const term = selectedTerminalId ? terminals.find((t) => t.id === selectedTerminalId) : null;
     if (!term?.active) return false;

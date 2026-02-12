@@ -29,7 +29,7 @@ export function extractRenderCommandAndUrl(text: string | null | undefined): { c
 export function isClaudeStream(data: unknown): boolean {
   if (typeof data !== "object" || data === null) return false;
   const obj = data as Record<string, unknown>;
-  const types = ["system", "assistant", "result", "user", "input", "permission_request"];
+  const types = ["system", "assistant", "result", "user", "input", "permission_request", "stream_event"];
   return types.includes(String(obj.type ?? "")) || Array.isArray(obj.permission_denials);
 }
 
