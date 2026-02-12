@@ -10,9 +10,11 @@ function getFileName(path: string): string {
 
 interface MessageBubbleProps {
   message: Message;
+  /** When true, the bubble content is the "Terminated" label (muted style). */
+  isTerminatedLabel?: boolean;
 }
 
-export function MessageBubble({ message }: MessageBubbleProps) {
+export function MessageBubble({ message, isTerminatedLabel }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
   const avatarText = message.role === "assistant" ? "C" : message.role === "user" ? "You" : "!";
@@ -27,7 +29,14 @@ export function MessageBubble({ message }: MessageBubbleProps) {
       )}
       <View style={[styles.bubble, isUser && styles.bubbleUser, isSystem && styles.bubbleSystem]}>
         {message.content ? (
-          <Text style={[styles.bubbleText, isSystem && styles.bubbleTextSystem]} selectable>
+          <Text
+            style={[
+              styles.bubbleText,
+              isSystem && styles.bubbleTextSystem,
+              isTerminatedLabel && styles.bubbleTextTerminated,
+            ]}
+            selectable={!isTerminatedLabel}
+          >
             {message.content}
           </Text>
         ) : null}
@@ -107,6 +116,10 @@ const styles = StyleSheet.create({
   bubbleTextSystem: {
     fontSize: 13,
     color: theme.textMuted,
+  },
+  bubbleTextTerminated: {
+    color: theme.textMuted,
+    fontStyle: "italic",
   },
   refPills: {
     flexDirection: "row",

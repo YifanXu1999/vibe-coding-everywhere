@@ -24,7 +24,7 @@ function getWorkspaceCwd() {
       break;
     }
   }
-  const raw = fromCli ?? process.env.WORKSPACE ?? process.env.WORKSPACE_CWD ?? __dirname;
+  const raw = fromCli ?? process.env.WORKSPACE ?? process.env.WORKSPACE_CWD ?? path.join(__dirname, "workspace");
   const resolved = path.resolve(raw);
   if (!fs.existsSync(resolved)) {
     console.warn(`[workspace] Path does not exist: ${resolved}. Using server directory.`);
@@ -40,17 +40,17 @@ function getWorkspaceCwd() {
 
 const WORKSPACE_CWD = getWorkspaceCwd();
 const SIDEBAR_REFRESH_INTERVAL_MS = parseInt(process.env.SIDEBAR_REFRESH_INTERVAL_MS || "3000", 10) || 3000;
-/** Log directory (from env or workspace). Timestamped filename is created at startup. */
+/** Log directory: env CLAUDE_OUTPUT_LOG, or <project-root>/logs (same dir as server.js). Timestamped filename at startup. */
 const CLAUDE_LOG_DIR = process.env.CLAUDE_OUTPUT_LOG
   ? path.resolve(process.env.CLAUDE_OUTPUT_LOG)
-  : WORKSPACE_CWD;
+  : path.join(__dirname, "logs");
 function getClaudeLogPath() {
-  let dir = WORKSPACE_CWD;
+  let dir = path.join(__dirname, "logs");
   try {
     const stat = fs.statSync(CLAUDE_LOG_DIR);
     dir = stat.isDirectory() ? CLAUDE_LOG_DIR : path.dirname(CLAUDE_LOG_DIR);
   } catch {
-    dir = path.isAbsolute(CLAUDE_LOG_DIR) ? path.dirname(CLAUDE_LOG_DIR) : WORKSPACE_CWD;
+    dir = path.isAbsolute(CLAUDE_LOG_DIR) ? path.dirname(CLAUDE_LOG_DIR) : path.join(__dirname, "logs");
   }
   const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   return path.join(dir, `claude-output-${ts}.log`);
@@ -184,7 +184,11 @@ app.use((req, res, next) => {
 });
 
 app.get("/api/config", (_, res) => {
-  res.json({ sidebarRefreshIntervalMs: SIDEBAR_REFRESH_INTERVAL_MS });
+  res.json({
+    sidebarRefreshIntervalMs: SIDEBAR_REFRESH_INTERVAL_MS,
+    /** When true, server is in mock Claude mode; client may show sequence picker and call /api/mock-sequences. */
+    useMockClaude: !!USE_MOCK_CLAUDE,
+  });
 });
 
 app.get("/api/mock-sequences", (_, res) => {
@@ -210,6 +214,7 @@ app.get("/api/workspace-tree", (_, res) => {
 });
 
 const IMAGE_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg"]);
+const MAX_TEXT_FILE_BYTES = 512 * 1024; // 500 KB - prevents huge files like package-lock.json from freezing the viewer
 
 app.get("/api/workspace-file", (req, res) => {
   const relPath = req.query.path;
@@ -233,6 +238,11 @@ app.get("/api/workspace-file", (req, res) => {
       const content = buffer.toString("base64");
       res.json({ path: normalized, content, isImage: true });
     } else {
+      if (stat.size > MAX_TEXT_FILE_BYTES) {
+        return res.status(413).json({
+          error: `File too large to display (${Math.round(stat.size / 1024)} KB, max ${Math.round(MAX_TEXT_FILE_BYTES / 1024)} KB). Try a smaller file.`,
+        });
+      }
       const content = fs.readFileSync(fullPath, "utf8");
       res.json({ path: normalized, content });
     }
@@ -250,34 +260,84 @@ function emitError(socket, message) {
   socket.emit("output", `\r\n\x1b[31m[Error] ${message}\x1b[0m\r\n`);
 }
 
-/** Replay a Claude output log line-by-line over socket (for MOCK_CLAUDE). Emits claude-started, then output chunks, then exit. Calls onDone when finished. */
+/** Returns true if the log contains AskUserQuestion (permission_denials or assistant tool_use). Matches real flow: exit only after user sends input. */
+function logContainsAskUserQuestion(lines) {
+  for (const line of lines) {
+    try {
+      const data = JSON.parse(line);
+      if (Array.isArray(data.permission_denials)) {
+        if (data.permission_denials.some((d) => (d.tool_name || d.tool) === "AskUserQuestion")) return true;
+      }
+      if (data.type === "assistant" && Array.isArray(data.message?.content)) {
+        if (data.message.content.some((c) => c.type === "tool_use" && c.name === "AskUserQuestion")) return true;
+      }
+    } catch (_) {
+      // skip invalid JSON lines
+    }
+  }
+  return false;
+}
+
+/** Replay a Claude output log line-by-line over socket (for MOCK_CLAUDE). Emits claude-started, then output chunks, then exit. If the log contains AskUserQuestion, exit is emitted only after the client sends "input" (same as real Claude). Returns a cancel() function to stop replay. */
 function startMockClaudeReplay(socket, permissionMode, allowedTools, useContinue, onDone, sequenceFromPayload) {
   const logPath = getMockClaudeLogPath(sequenceFromPayload);
   if (!fs.existsSync(logPath)) {
     emitError(socket, `Mock Claude: log file not found: ${logPath}`);
     if (onDone) onDone();
-    return;
+    return () => {};
   }
   const raw = fs.readFileSync(logPath, "utf8");
   const lines = raw.split("\n").map((s) => s.trim()).filter((s) => s.startsWith("{"));
   if (lines.length === 0) {
     emitError(socket, `Mock Claude: no JSON lines in ${logPath}`);
     if (onDone) onDone();
-    return;
+    return () => {};
   }
+  const waitForInputBeforeExit = logContainsAskUserQuestion(lines);
   socket.emit("claude-started", {
     permissionMode: permissionMode || null,
     allowedTools: allowedTools || [],
     useContinue: !!useContinue,
   });
   const delayMs = Math.max(0, parseInt(process.env.MOCK_CLAUDE_DELAY_MS || "80", 10));
-  /** Delay before emitting "exit" so the user has time to see/use the AskUserQuestion modal; 0 = emit immediately. */
   const exitDelayMs = Math.max(0, parseInt(process.env.MOCK_CLAUDE_EXIT_DELAY_MS || "60000", 10));
   let index = 0;
-  function sendNext() {
-    if (index >= lines.length) {
+  let cancelled = false;
+  let timeoutId = null;
+  let immediateId = null;
+  let inputListener = null;
+  function finishReplay() {
+    if (cancelled) return;
+    if (waitForInputBeforeExit) {
+      inputListener = (data) => {
+        if (cancelled) return;
+        socket.removeListener("input", inputListener);
+        inputListener = null;
+        // Emit a synthetic follow-up so the user sees a reply (mock log has no content after user's answer).
+        const isJson = typeof data === "string" && data.trimStart().startsWith("{");
+        const payload = isJson && (() => { try { return JSON.parse(data.replace(/\r$/, "")); } catch { return null; } })();
+        const summary =
+          payload?.message?.content?.[0]?.type === "tool_result" && typeof payload.message.content[0].content === "string"
+            ? payload.message.content[0].content
+            : payload?.answers && Array.isArray(payload.answers)
+              ? payload.answers.map((a) => `${a.header || ""}: ${(a.selected || []).join(", ")}`).filter(Boolean).join("; ")
+              : null;
+        const followUpText = summary
+          ? `Thanks for your choices (${summary}). I'll use that to suggest a project structure and tooling.`
+          : "Thanks for your input. I'll use that to continue.";
+        const followUpLine = JSON.stringify({
+          type: "assistant",
+          message: { content: [{ type: "text", text: followUpText }] },
+        }) + "\n";
+        socket.emit("output", followUpLine);
+        socket.emit("exit", { exitCode: 0 });
+        if (onDone) onDone();
+      };
+      socket.on("input", inputListener);
+    } else {
       if (exitDelayMs > 0) {
-        setTimeout(() => {
+        timeoutId = setTimeout(() => {
+          if (cancelled) return;
           socket.emit("exit", { exitCode: 0 });
           if (onDone) onDone();
         }, exitDelayMs);
@@ -285,20 +345,42 @@ function startMockClaudeReplay(socket, permissionMode, allowedTools, useContinue
         socket.emit("exit", { exitCode: 0 });
         if (onDone) onDone();
       }
+    }
+  }
+  function sendNext() {
+    if (cancelled) return;
+    if (index >= lines.length) {
+      finishReplay();
       return;
     }
     socket.emit("output", lines[index] + "\n");
     index += 1;
-    if (delayMs > 0) setTimeout(sendNext, delayMs);
-    else setImmediate(sendNext);
+    if (delayMs > 0) timeoutId = setTimeout(sendNext, delayMs);
+    else immediateId = setImmediate(sendNext);
   }
   sendNext();
+  return function cancel() {
+    cancelled = true;
+    if (timeoutId != null) {
+      clearTimeout(timeoutId);
+      timeoutId = null;
+    }
+    if (immediateId != null) {
+      clearImmediate(immediateId);
+      immediateId = null;
+    }
+    if (inputListener) {
+      socket.removeListener("input", inputListener);
+      inputListener = null;
+    }
+  };
 }
 
 io.on("connection", (socket) => {
   let ptyProcess = null;
   let hasCompletedFirstRun = false;
   let mockReplayActive = false;
+  let mockReplayCancel = null;
 
   function claudeProcessRunning() {
     return ptyProcess !== null || mockReplayActive;
@@ -331,6 +413,10 @@ io.on("connection", (socket) => {
 
       let logStream = null;
       try {
+        const logDir = path.dirname(CLAUDE_OUTPUT_LOG);
+        if (!fs.existsSync(logDir)) {
+          fs.mkdirSync(logDir, { recursive: true });
+        }
         logStream = fs.createWriteStream(CLAUDE_OUTPUT_LOG, { flags: "a" });
         const header = `\n--- Claude session started ${new Date().toISOString()} ---\n`;
         logStream.write(header);
@@ -387,16 +473,19 @@ io.on("connection", (socket) => {
     const useContinue = hasCompletedFirstRun;
 
     if (USE_MOCK_CLAUDE) {
-      if (mockReplayActive) {
-        emitError(socket, "Mock Claude replay already in progress. Wait for it to finish.");
-        return;
+      // If a replay is running, stop it and allow the new one (no "already in progress" error).
+      if (mockReplayCancel) {
+        mockReplayCancel();
+        mockReplayCancel = null;
+        socket.emit("exit", { exitCode: 0 });
       }
       mockReplayActive = true;
       const seq = payload?.sequence && String(payload.sequence).trim() ? String(payload.sequence).trim() : null;
       const logPath = getMockClaudeLogPath(seq);
       console.log("[submit-prompt] mock Claude: replaying log", logPath, seq ? `(sequence: ${seq})` : "");
-      startMockClaudeReplay(socket, permissionMode || null, allowedTools, useContinue, () => {
+      mockReplayCancel = startMockClaudeReplay(socket, permissionMode || null, allowedTools, useContinue, () => {
         mockReplayActive = false;
+        mockReplayCancel = null;
         hasCompletedFirstRun = true;
       }, seq);
       return;
@@ -416,6 +505,19 @@ io.on("connection", (socket) => {
     if (ptyProcess) {
       ptyProcess.resize(cols, rows);
     }
+  });
+
+  socket.on("claude-terminate", () => {
+    if (ptyProcess) {
+      ptyProcess.kill();
+      ptyProcess = null;
+    }
+    if (mockReplayCancel) {
+      mockReplayCancel();
+      mockReplayCancel = null;
+    }
+    mockReplayActive = false;
+    socket.emit("exit", { exitCode: 0 });
   });
 
   socket.on("claude-debug", (payload) => {
@@ -535,6 +637,11 @@ io.on("connection", (socket) => {
       ptyProcess.kill();
       ptyProcess = null;
     }
+    if (mockReplayCancel) {
+      mockReplayCancel();
+      mockReplayCancel = null;
+    }
+    mockReplayActive = false;
     for (const child of runRenderTerminals.values()) {
       child.kill();
     }

@@ -42,6 +42,8 @@ export interface InputPanelProps {
   onShowTerminal?: () => void;
   /** Open full-screen terminal. Button is shown beside model name (Sonnet 4.5). */
   onOpenTerminal?: () => void;
+  /** When agent is running, show a control to terminate the response. */
+  onTerminateAgent?: () => void;
 }
 
 export function InputPanel({
@@ -57,6 +59,7 @@ export function InputPanel({
   runProcessActive = false,
   onShowTerminal,
   onOpenTerminal,
+  onTerminateAgent,
 }: InputPanelProps) {
   const [prompt, setPrompt] = useState("");
 
@@ -133,6 +136,16 @@ export function InputPanel({
             >
               <Text style={styles.btnTerminalText}>⌘</Text>
               {runProcessActive && <View style={styles.terminalRunningDot} />}
+            </TouchableOpacity>
+          )}
+          {onTerminateAgent && claudeRunning && (
+            <TouchableOpacity
+              style={styles.btnTerminateAgent}
+              onPress={onTerminateAgent}
+              activeOpacity={0.8}
+              accessibilityLabel="Terminate agent response"
+            >
+              <Text style={styles.btnTerminateAgentText}>Stop</Text>
             </TouchableOpacity>
           )}
           <TouchableOpacity
@@ -275,6 +288,21 @@ const styles = StyleSheet.create({
     height: 6,
     borderRadius: 3,
     backgroundColor: theme.success,
+  },
+  btnTerminateAgent: {
+    paddingHorizontal: 12,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: "rgba(200, 60, 60, 0.15)",
+    borderWidth: 1,
+    borderColor: "rgba(200, 60, 60, 0.4)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  btnTerminateAgentText: {
+    fontSize: 14,
+    color: "#c0392b",
+    fontWeight: "600",
   },
   btnSend: {
     width: 36,

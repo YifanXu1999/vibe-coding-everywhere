@@ -21,6 +21,7 @@ const TOP_INSET = Platform.OS === "ios" ? 50 : 28;
 
 const LINE_HEIGHT = 22;
 const FONT_SIZE = 13;
+const MAX_DISPLAY_LINES = 3000; // Avoid render freeze for very large files that slip through
 
 /** Map file extension to Prism language (prism-react-renderer built-in set). */
 function getLanguage(path: string | null): string {
@@ -145,7 +146,9 @@ export function FileViewerModal({
     setImageScale(1);
   }, []);
 
-  const lines = content != null ? content.split("\n") : [];
+  const allLines = content != null ? content.split("\n") : [];
+  const truncated = allLines.length > MAX_DISPLAY_LINES;
+  const lines = truncated ? allLines.slice(0, MAX_DISPLAY_LINES) : allLines;
   const onLinePress = useCallback(
     (lineIndex: number) => {
       const lineNum = lineIndex + 1;
@@ -240,6 +243,13 @@ export function FileViewerModal({
 
         {content !== null && !loading && !error && !isImage && (
           <View style={styles.codeWrap}>
+            {truncated && (
+              <View style={styles.truncatedBanner}>
+                <Text style={styles.truncatedText}>
+                  Showing first {MAX_DISPLAY_LINES} of {allLines.length} lines
+                </Text>
+              </View>
+            )}
             {hasSelection && onAddCodeReference && (
               <View style={styles.addRefBar}>
                 <Text style={styles.addRefHint}>
@@ -418,6 +428,17 @@ const styles = StyleSheet.create({
   },
   codeWrap: {
     flex: 1,
+  },
+  truncatedBanner: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    backgroundColor: theme.accentLight,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.borderColor,
+  },
+  truncatedText: {
+    fontSize: 13,
+    color: theme.textMuted,
   },
   addRefBar: {
     flexDirection: "row",

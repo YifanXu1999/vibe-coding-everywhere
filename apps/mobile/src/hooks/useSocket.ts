@@ -62,6 +62,7 @@ export function useSocket(options: UseSocketOptions = {}) {
   const [selectedTerminalId, setSelectedTerminalId] = useState<string | null>(null);
   const [mockSequences, setMockSequences] = useState<string[]>([]);
   const [selectedSequence, setSelectedSequence] = useState<string | null>(null);
+  const [lastSessionTerminated, setLastSessionTerminated] = useState(false);
 
   const socketRef = useRef<Socket | null>(null);
   const outputBufferRef = useRef("");
@@ -210,6 +211,7 @@ export function useSocket(options: UseSocketOptions = {}) {
           });
         }
         setClaudeRunning(true);
+        setLastSessionTerminated(false);
         finalizeAssistantMessage();
         setTypingIndicator(true);
         setWaitingForUserInput(false);
@@ -221,7 +223,9 @@ export function useSocket(options: UseSocketOptions = {}) {
       hasCompletedFirstRunRef.current = true;
       setClaudeRunning(false);
       setWaitingForUserInput(false);
-      setPendingAskQuestion(null);
+      // Do not clear pendingAskQuestion on exit: keep the modal open so the user can still
+      // select and confirm; they can dismiss via Cancel. Clearing here caused the modal to
+      // disappear immediately when mock replay or real Claude sent exit right after the question.
       finalizeAssistantMessage();
       console.log("[session] Chat completed.");
     });
@@ -291,9 +295,17 @@ export function useSocket(options: UseSocketOptions = {}) {
 
   useEffect(() => {
     if (!connected) return;
-    fetch(`${serverUrl}/api/mock-sequences`)
+    fetch(`${serverUrl}/api/config`)
       .then((res) => res.json())
-      .then((data) => setMockSequences(Array.isArray(data?.sequences) ? data.sequences : []))
+      .then((config: { useMockClaude?: boolean }) => {
+        if (config?.useMockClaude) {
+          return fetch(`${serverUrl}/api/mock-sequences`)
+            .then((r) => r.json())
+            .then((data) => setMockSequences(Array.isArray(data?.sequences) ? data.sequences : []))
+            .catch(() => setMockSequences([]));
+        }
+        setMockSequences([]);
+      })
       .catch(() => setMockSequences([]));
   }, [connected, serverUrl]);
 
@@ -329,6 +341,7 @@ export function useSocket(options: UseSocketOptions = {}) {
 
       if (claudeRunning) return;
 
+      setLastSessionTerminated(false);
       const refsForDisplay: CodeReference[] = [];
       let fullPrompt: string;
       const workspaceRoot = workspaceRootRef.current;
@@ -387,20 +400,34 @@ export function useSocket(options: UseSocketOptions = {}) {
   const submitAskQuestionAnswer = useCallback(
     (answers: Array<{ header: string; selected: string[] }>) => {
       const pending = pendingAskQuestion;
-      if (!pending || !socketRef.current || !claudeRunning) return;
-      const payload = {
-        tool_use_id: pending.tool_use_id,
-        ...(pending.uuid != null && { uuid: pending.uuid }),
-        answers,
-      };
-      const json = JSON.stringify(payload);
-      socketRef.current.emit("input", json + "\r");
       const summary = answers.map((a) => `${a.header}: ${a.selected.join(", ")}`).join("; ");
+      // Always add user message so the user sees their choice in the chat, even if we can't send to backend
       addMessage("user", summary);
       setPendingAskQuestion(null);
       setWaitingForUserInput(false);
+
+      if (!pending || !socketRef.current) return;
+      // Always send to server so the CLI can continue (if it's still running). We used to require claudeRunning, but the process may have emitted "exit" before the user confirms, which would prevent us from ever sending and getting a follow-up.
+      // Claude CLI with stream-json expects a "user" message with tool_result content (same format it outputs). Use newline as line terminator (JSON lines / stream-json convention).
+      const toolResultContent = summary;
+      const streamPayload = {
+        type: "user",
+        message: {
+          role: "user" as const,
+          content: [
+            {
+              type: "tool_result" as const,
+              tool_use_id: pending.tool_use_id,
+              content: toolResultContent,
+            },
+          ],
+        },
+        ...(pending.uuid != null && { uuid: pending.uuid }),
+      };
+      const json = JSON.stringify(streamPayload);
+      socketRef.current.emit("input", json + "\n");
     },
-    [pendingAskQuestion, claudeRunning, addMessage]
+    [pendingAskQuestion, addMessage]
   );
 
   const runRenderCommand = useCallback((command: string, url: string) => {
@@ -443,6 +470,15 @@ export function useSocket(options: UseSocketOptions = {}) {
     setSelectedTerminalId((current) => (current === terminalId ? null : current));
   }, []);
 
+  const terminateAgent = useCallback(() => {
+    socketRef.current?.emit("claude-terminate");
+    setClaudeRunning(false);
+    setLastSessionTerminated(true);
+    setWaitingForUserInput(false);
+    setPendingAskQuestion(null);
+    finalizeAssistantMessage();
+  }, [finalizeAssistantMessage]);
+
   const runProcessActive = terminals.some((t) => t.active);
   const selectedTerminal = selectedTerminalId
     ? terminals.find((t) => t.id === selectedTerminalId)
@@ -483,9 +519,11 @@ export function useSocket(options: UseSocketOptions = {}) {
     runNewTerminal,
     runUserCommand,
     terminateRunProcess,
+    terminateAgent,
     canRunInSelectedTerminal,
     mockSequences,
     selectedSequence,
     setSelectedSequence,
+    lastSessionTerminated,
   };
 }

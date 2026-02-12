@@ -88,10 +88,12 @@ export default function App() {
     runNewTerminal,
     runUserCommand,
     terminateRunProcess,
+    terminateAgent,
     canRunInSelectedTerminal,
     mockSequences,
     selectedSequence,
     setSelectedSequence,
+    lastSessionTerminated,
   } = useSocket();
 
   const [terminalFullScreen, setTerminalFullScreen] = useState(false);
@@ -244,7 +246,20 @@ export default function App() {
               showsHorizontalScrollIndicator={false}
               data={messages}
               keyExtractor={(item) => item.id}
-              renderItem={({ item }) => <MessageBubble message={item} />}
+              renderItem={({ item, index }) => {
+                const isLast = index === messages.length - 1;
+                const showTerminated =
+                  lastSessionTerminated && isLast && item.role === "assistant" && !item.content;
+                const messageToShow = showTerminated
+                  ? { ...item, content: "Terminated" }
+                  : item;
+                return (
+                  <MessageBubble
+                    message={messageToShow}
+                    isTerminatedLabel={showTerminated}
+                  />
+                );
+              }}
               ListFooterComponent={
                 <>
                   <TypingIndicator visible={typingIndicator} />
@@ -310,36 +325,6 @@ export default function App() {
           </View>
 
           <View style={styles.inputBar}>
-            {mockSequences.length > 0 && (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                style={styles.sequencePicker}
-                contentContainerStyle={styles.sequencePickerContent}
-              >
-                {mockSequences.map((seq) => (
-                  <TouchableOpacity
-                    key={seq}
-                    style={[styles.sequenceChip, selectedSequence === seq && styles.sequenceChipSelected]}
-                    onPress={() => {
-                      if (selectedSequence === seq) {
-                        setSelectedSequence(null);
-                      } else {
-                        setSelectedSequence(seq);
-                        if (!claudeRunning) {
-                          submitPrompt("Start", permissionMode ?? undefined, undefined, undefined, seq);
-                        }
-                      }
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={[styles.sequenceChipText, selectedSequence === seq && styles.sequenceChipTextSelected]} numberOfLines={1}>
-                      {seq}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            )}
             <InputPanel
               connected={connected}
               claudeRunning={claudeRunning}
@@ -353,6 +338,7 @@ export default function App() {
               runProcessActive={runProcessActive}
               onShowTerminal={() => flatListRef.current?.scrollToEnd({ animated: true })}
               onOpenTerminal={() => setTerminalFullScreen(true)}
+              onTerminateAgent={terminateAgent}
             />
           </View>
         </View>
