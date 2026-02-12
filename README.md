@@ -49,6 +49,18 @@ npm start
 
 Server listens on `http://localhost:3456` (configurable via `PORT`). It binds to `0.0.0.0` so it is reachable on the Tailscale network.
 
+### Mock Claude (conversation replay)
+
+To test the mobile or web UI without running the real Claude CLI or API, start the server with mock mode. It will replay a log file (NDJSON from a previous Claude session) so you can see assistant messages, AskUserQuestion modals, etc.
+
+```bash
+MOCK_CLAUDE=1 npm start
+```
+
+- **Simplified:** When the server starts, the mobile app fetches available sequences from `apps/mobile/__tests__/sequences/`. A sequence picker appears above the input bar—tap a chip to choose which sequence to replay, then send a prompt.
+- Log file: defaults to `ask-two-questions-purpose-style` from the sequences dir (or set `MOCK_CLAUDE_LOG` / `MOCK_CLAUDE_SEQUENCE` env for a specific file).
+- Optional: `MOCK_CLAUDE_DELAY_MS=80` adds a short delay between lines to simulate streaming.
+
 ### Web client
 
 With the server running, open http://localhost:3456 in your browser.
@@ -62,18 +74,34 @@ The mobile app connects to the server over Tailscale so you can use it from your
 - [Tailscale](https://tailscale.com/download) installed on your desktop and mobile device
 - Both devices joined to the same tailnet
 
-### Run mobile funnel
+### Run mobile app (see chat flow)
 
-1. Start the server in one terminal:
+**Run these from the repository root** (e.g. `mobile-coder-new/`), not from `apps/mobile`.
+
+**Option A – Simulator / local (no Tailscale)**
+
+1. Start the server in one terminal (from repo root):
    ```bash
    npm start
    ```
 
-2. In another terminal, run:
+2. In another terminal, from repo root:
+   ```bash
+   npm run dev:mobile
+   ```
+   This starts Expo with `EXPO_PUBLIC_SERVER_URL=http://localhost:3456`. Open the app in iOS Simulator or Android emulator to use the chat.
+
+**Option B – Physical device over Tailscale**
+
+1. Start the server in one terminal (from repo root):
+   ```bash
+   npm start
+   ```
+
+2. In another terminal, from repo root:
    ```bash
    npm run dev:mobile:funnel
    ```
-
    This script:
    - Reads `tailscale status --json` to get your machine's Tailscale host (IP or MagicDNS)
    - Sets `EXPO_PUBLIC_SERVER_URL` to `http://<tailscale-host>:3456`

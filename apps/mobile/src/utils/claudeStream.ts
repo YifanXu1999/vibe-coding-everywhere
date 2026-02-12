@@ -26,11 +26,24 @@ export function extractRenderCommandAndUrl(text: string | null | undefined): { c
   return { command: cmdMatch[1].trim(), url: urlMatch[1].trim() };
 }
 
+/** Payload is AskUserQuestion tool call (tool_name + tool_input.questions). */
+export function isAskUserQuestionPayload(data: unknown): boolean {
+  if (typeof data !== "object" || data === null) return false;
+  const obj = data as Record<string, unknown>;
+  if (String(obj.tool_name ?? "") !== "AskUserQuestion") return false;
+  const input = obj.tool_input as Record<string, unknown> | undefined;
+  return Array.isArray(input?.questions) && (input.questions as unknown[]).length > 0;
+}
+
 export function isClaudeStream(data: unknown): boolean {
   if (typeof data !== "object" || data === null) return false;
   const obj = data as Record<string, unknown>;
   const types = ["system", "assistant", "result", "user", "input", "permission_request", "stream_event"];
-  return types.includes(String(obj.type ?? "")) || Array.isArray(obj.permission_denials);
+  return (
+    types.includes(String(obj.type ?? "")) ||
+    Array.isArray(obj.permission_denials) ||
+    isAskUserQuestionPayload(obj)
+  );
 }
 
 export function deniedToolToAllowedPattern(toolName: string | null | undefined): string | null {

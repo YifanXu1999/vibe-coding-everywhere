@@ -1,4 +1,5 @@
-import type { Message, PermissionDenial } from "./types";
+import type { Message, PermissionDenial, PendingAskUserQuestion } from "./types";
+import { isAskUserQuestionPayload } from "../utils/claudeStream";
 
 /**
  * Context passed to Claude event handlers (Strategy pattern).
@@ -9,6 +10,7 @@ export interface ClaudeEventContext {
   setPendingRender: (value: { command: string; url: string } | null) => void;
   setModelName: (name: string) => void;
   setWaitingForUserInput: (value: boolean) => void;
+  setPendingAskQuestion: (value: PendingAskUserQuestion | null) => void;
   addMessage: (role: Message["role"], content: string, codeReferences?: { path: string; startLine: number; endLine: number }[]) => string;
   appendAssistantText: (chunk: string) => void;
   /** Current assistant message content (for delta-only append to avoid full-text display when stream ends). */
@@ -77,13 +79,73 @@ function createHandlerRegistry(ctx: ClaudeEventContext): Map<string, ClaudeEvent
  * Dispatches a Claude stream event to the registered handler for data.type.
  * Handles permission_denials before type; falls back to appending as text for unknown types.
  */
+function normalizeAskUserQuestionPayload(data: Record<string, unknown>): PendingAskUserQuestion | null {
+  const toolUseId = String(data.tool_use_id ?? "");
+  const input = data.tool_input as Record<string, unknown> | undefined;
+  const questions = input?.questions as Array<{ question?: string; header: string; options: Array<{ label: string; description?: string }>; multiSelect?: boolean }> | undefined;
+  if (!toolUseId || !Array.isArray(questions) || questions.length === 0) return null;
+  const uuid = data.uuid ?? input?.uuid;
+  return {
+    tool_use_id: toolUseId,
+    uuid: uuid != null ? String(uuid) : undefined,
+    questions: questions.map((q) => ({
+      question: q.question,
+      header: q.header ?? "",
+      options: Array.isArray(q.options) ? q.options.map((o) => ({ label: String(o?.label ?? ""), description: o?.description != null ? String(o.description) : undefined })) : [],
+      multiSelect: !!q.multiSelect,
+    })),
+  };
+}
+
+/** AskUserQuestion is handled by the question modal. Returns filtered list and extracted AskUserQuestion payload if any. */
+function processPermissionDenials(
+  denials: PermissionDenial[],
+  topLevelData: Record<string, unknown>
+): { filteredDenials: PermissionDenial[]; askUserQuestionPayload: Record<string, unknown> | null } {
+  let askPayload: Record<string, unknown> | null = null;
+  const filtered = denials.filter((d) => {
+    const tool = d.tool_name ?? d.tool ?? "";
+    if (String(tool).trim() !== "AskUserQuestion") return true;
+    const input = (d as Record<string, unknown>).tool_input as Record<string, unknown> | undefined;
+    if (input && Array.isArray(input.questions) && input.questions.length > 0) {
+      askPayload = {
+        tool_name: "AskUserQuestion",
+        tool_use_id: (d as Record<string, unknown>).tool_use_id,
+        tool_input: input,
+        uuid: topLevelData.uuid ?? input.uuid,
+      };
+    }
+    return false;
+  });
+  return { filteredDenials: filtered, askUserQuestionPayload: askPayload };
+}
+
 export function createClaudeEventDispatcher(ctx: ClaudeEventContext): (data: Record<string, unknown>) => void {
   const registry = createHandlerRegistry(ctx);
   return (data: Record<string, unknown>) => {
     if (Array.isArray(data.permission_denials) && data.permission_denials.length) {
       const list = data.permission_denials as PermissionDenial[];
-      ctx.setPermissionDenials(ctx.deduplicateDenials(list));
+      const deduped = ctx.deduplicateDenials(list);
+      const { filteredDenials, askUserQuestionPayload } = processPermissionDenials(deduped, data);
+      ctx.setPermissionDenials(filteredDenials.length > 0 ? filteredDenials : null);
       ctx.setPendingRender(null);
+      if (askUserQuestionPayload) {
+        const pending = normalizeAskUserQuestionPayload(askUserQuestionPayload);
+        if (pending) {
+          ctx.setPendingAskQuestion(pending);
+          ctx.setWaitingForUserInput(true);
+          ctx.addMessage("system", "Please select your choices below and confirm.");
+        }
+      }
+    }
+    if (isAskUserQuestionPayload(data)) {
+      const pending = normalizeAskUserQuestionPayload(data);
+      if (pending) {
+        ctx.setPendingAskQuestion(pending);
+        ctx.setWaitingForUserInput(true);
+        ctx.addMessage("system", "Please select your choices below and confirm.");
+      }
+      return;
     }
     const type = String(data.type ?? "");
     const handler = registry.get(type);

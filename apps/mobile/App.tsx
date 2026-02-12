@@ -21,11 +21,13 @@ import { MessageBubble } from "./src/components/MessageBubble";
 import { TypingIndicator } from "./src/components/TypingIndicator";
 import { RenderPreviewBar } from "./src/components/RenderPreviewBar";
 import { PermissionDenialBanner } from "./src/components/PermissionDenialBanner";
+import { AskQuestionModal } from "./src/components/AskQuestionModal";
 import { InputPanel } from "./src/components/InputPanel";
 import { PreviewWebViewModal } from "./src/components/PreviewWebViewModal";
 import { RunOutputView } from "./src/components/RunOutputView";
 import { WorkspaceSidebar } from "./src/components/WorkspaceSidebar";
 import { FileViewerModal, type CodeRefPayload } from "./src/components/FileViewerModal";
+import { DevUITestScreen } from "./src/components/DevUITestScreen";
 import {
   getDefaultServerConfig,
   createWorkspaceFileService,
@@ -77,6 +79,9 @@ export default function App() {
     runCommand,
     runProcessActive,
     submitPrompt,
+    pendingAskQuestion,
+    submitAskQuestionAnswer,
+    dismissAskQuestion,
     retryAfterPermission,
     dismissPermission,
     runRenderCommand,
@@ -84,10 +89,14 @@ export default function App() {
     runUserCommand,
     terminateRunProcess,
     canRunInSelectedTerminal,
+    mockSequences,
+    selectedSequence,
+    setSelectedSequence,
   } = useSocket();
 
   const [terminalFullScreen, setTerminalFullScreen] = useState(false);
   const [terminalCommandInput, setTerminalCommandInput] = useState("");
+  const [showDevUITest, setShowDevUITest] = useState(false);
 
   useEffect(() => {
     if (messages.length > 0) {
@@ -194,6 +203,15 @@ export default function App() {
     setTerminalFullScreen(false);
   }, []);
 
+  if (__DEV__ && showDevUITest) {
+    return (
+      <>
+        <StatusBar style="dark" />
+        <DevUITestScreen onBack={() => setShowDevUITest(false)} />
+      </>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style="dark" />
@@ -209,6 +227,7 @@ export default function App() {
                 <TouchableOpacity
                   style={styles.menuButton}
                   onPress={() => setSidebarVisible(true)}
+                  onLongPress={() => __DEV__ && setShowDevUITest(true)}
                   activeOpacity={0.7}
                   accessibilityLabel="Open Explorer"
                 >
@@ -291,6 +310,36 @@ export default function App() {
           </View>
 
           <View style={styles.inputBar}>
+            {mockSequences.length > 0 && (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={styles.sequencePicker}
+                contentContainerStyle={styles.sequencePickerContent}
+              >
+                {mockSequences.map((seq) => (
+                  <TouchableOpacity
+                    key={seq}
+                    style={[styles.sequenceChip, selectedSequence === seq && styles.sequenceChipSelected]}
+                    onPress={() => {
+                      if (selectedSequence === seq) {
+                        setSelectedSequence(null);
+                      } else {
+                        setSelectedSequence(seq);
+                        if (!claudeRunning) {
+                          submitPrompt("Start", permissionMode ?? undefined, undefined, undefined, seq);
+                        }
+                      }
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={[styles.sequenceChipText, selectedSequence === seq && styles.sequenceChipTextSelected]} numberOfLines={1}>
+                      {seq}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
             <InputPanel
               connected={connected}
               claudeRunning={claudeRunning}
@@ -307,6 +356,12 @@ export default function App() {
             />
           </View>
         </View>
+
+        <AskQuestionModal
+          pending={pendingAskQuestion}
+          onSubmit={submitAskQuestionAnswer}
+          onCancel={dismissAskQuestion}
+        />
 
         <PreviewWebViewModal
           visible={previewUrl != null}
@@ -573,6 +628,35 @@ const styles = StyleSheet.create({
     flexGrow: 0,
     paddingTop: 12,
     paddingBottom: 8,
+  },
+  sequencePicker: {
+    maxHeight: 40,
+    marginBottom: 8,
+  },
+  sequencePickerContent: {
+    flexDirection: "row",
+    gap: 8,
+    paddingHorizontal: 16,
+  },
+  sequenceChip: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    backgroundColor: theme.cardBg,
+    borderWidth: 1,
+    borderColor: theme.borderColor,
+  },
+  sequenceChipSelected: {
+    backgroundColor: theme.accentLight,
+    borderColor: theme.accent,
+  },
+  sequenceChipText: {
+    fontSize: 13,
+    color: theme.textMuted,
+  },
+  sequenceChipTextSelected: {
+    color: theme.accent,
+    fontWeight: "600",
   },
   chatMessages: {
     paddingVertical: 12,

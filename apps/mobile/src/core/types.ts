@@ -50,6 +50,27 @@ export interface IConnectionState {
   connected: boolean;
 }
 
+/** Option for AskUserQuestion tool (label + optional description). */
+export type AskUserQuestionOption = {
+  label: string;
+  description?: string;
+};
+
+/** Single question in AskUserQuestion tool_input. */
+export type AskUserQuestionItem = {
+  question?: string;
+  header: string;
+  options: AskUserQuestionOption[];
+  multiSelect?: boolean;
+};
+
+/** Pending AskUserQuestion tool call to show in UI and reply to. */
+export type PendingAskUserQuestion = {
+  tool_use_id: string;
+  uuid?: string;
+  questions: AskUserQuestionItem[];
+};
+
 /** Chat messages and typing state. */
 export interface IChatState {
   messages: Message[];

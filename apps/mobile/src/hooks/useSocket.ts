@@ -5,6 +5,7 @@ import {
   stripAnsi,
   stripTrailingIncompleteTag,
   isClaudeStream,
+  isAskUserQuestionPayload,
   getAllowedToolsFromDenials,
 } from "../utils/claudeStream";
 import type {
@@ -12,6 +13,7 @@ import type {
   CodeReference,
   PendingRender,
   PermissionDenial,
+  PendingAskUserQuestion,
   LastRunOptions,
   TerminalState,
   IServerConfig,
@@ -20,7 +22,7 @@ import { getDefaultServerConfig } from "../core/serverConfig";
 import { createClaudeEventDispatcher } from "../core/claudeEventStrategies";
 
 // Re-export types for consumers that import from useSocket
-export type { Message, CodeReference, PendingRender, PermissionDenial, LastRunOptions, TerminalState };
+export type { Message, CodeReference, PendingRender, PermissionDenial, PendingAskUserQuestion, LastRunOptions, TerminalState };
 
 /** Normalize path to forward slashes and, if workspace root is set, to relative path. */
 function toWorkspaceRelativePath(filePath: string, workspaceRoot: string | null): string {
@@ -53,10 +55,13 @@ export function useSocket(options: UseSocketOptions = {}) {
     useContinue: false,
   });
   const [permissionDenials, setPermissionDenials] = useState<PermissionDenial[] | null>(null);
+  const [pendingAskQuestion, setPendingAskQuestion] = useState<PendingAskUserQuestion | null>(null);
   const [modelName, setModelName] = useState("Sonnet 4.5");
   const [runRenderResult, setRunRenderResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [terminals, setTerminals] = useState<TerminalState[]>([]);
   const [selectedTerminalId, setSelectedTerminalId] = useState<string | null>(null);
+  const [mockSequences, setMockSequences] = useState<string[]>([]);
+  const [selectedSequence, setSelectedSequence] = useState<string | null>(null);
 
   const socketRef = useRef<Socket | null>(null);
   const outputBufferRef = useRef("");
@@ -133,6 +138,7 @@ export function useSocket(options: UseSocketOptions = {}) {
         setPendingRender,
         setModelName,
         setWaitingForUserInput,
+        setPendingAskQuestion,
         addMessage,
         appendAssistantText,
         getCurrentAssistantContent: () => currentAssistantContentRef.current,
@@ -145,11 +151,14 @@ export function useSocket(options: UseSocketOptions = {}) {
   const handleRawLine = useCallback(
     (line: string) => {
       const trimmed = line.trim();
-      if (trimmed.startsWith("{")) {
+      if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
         try {
-          const parsed = JSON.parse(trimmed) as Record<string, unknown>;
-          if (isClaudeStream(parsed)) {
-            handleClaudeEvent(parsed);
+          const parsed = JSON.parse(trimmed) as Record<string, unknown> | unknown[];
+          const payload: Record<string, unknown> = Array.isArray(parsed) && parsed.length > 0 && isAskUserQuestionPayload(parsed[0])
+            ? (parsed[0] as Record<string, unknown>)
+            : (parsed as Record<string, unknown>);
+          if (isClaudeStream(payload)) {
+            handleClaudeEvent(payload);
             return;
           }
         } catch {
@@ -204,6 +213,7 @@ export function useSocket(options: UseSocketOptions = {}) {
         finalizeAssistantMessage();
         setTypingIndicator(true);
         setWaitingForUserInput(false);
+        setPendingAskQuestion(null);
       }
     );
 
@@ -211,6 +221,7 @@ export function useSocket(options: UseSocketOptions = {}) {
       hasCompletedFirstRunRef.current = true;
       setClaudeRunning(false);
       setWaitingForUserInput(false);
+      setPendingAskQuestion(null);
       finalizeAssistantMessage();
       console.log("[session] Chat completed.");
     });
@@ -278,16 +289,35 @@ export function useSocket(options: UseSocketOptions = {}) {
     };
   }, [serverUrl, handleRawLine, appendAssistantText, finalizeAssistantMessage, addMessage]);
 
+  useEffect(() => {
+    if (!connected) return;
+    fetch(`${serverUrl}/api/mock-sequences`)
+      .then((res) => res.json())
+      .then((data) => setMockSequences(Array.isArray(data?.sequences) ? data.sequences : []))
+      .catch(() => setMockSequences([]));
+  }, [connected, serverUrl]);
+
   const submitPrompt = useCallback(
     (
       prompt: string,
       permissionMode?: string,
       allowedTools?: string[],
-      codeReferences?: { path: string; startLine: number; endLine: number; snippet: string }[]
+      codeReferences?: { path: string; startLine: number; endLine: number; snippet: string }[],
+      sequence?: string | null
     ) => {
       const socket = socketRef.current;
       if (!socket || !prompt.trim()) return;
 
+      if (pendingAskQuestion && claudeRunning) {
+        // Prefer answering via AskQuestionModal; if user typed in input bar, send as plain input
+        const input = `${prompt.trim()}\r`;
+        console.log("[chat input] (reply to tool):", prompt.trim());
+        socket.emit("input", input);
+        addMessage("user", prompt.trim());
+        setPendingAskQuestion(null);
+        setWaitingForUserInput(false);
+        return;
+      }
       if (waitingForUserInput && claudeRunning) {
         const input = `${prompt.trim()}\r`;
         console.log("[chat input] (reply to tool):", prompt.trim());
@@ -322,15 +352,17 @@ export function useSocket(options: UseSocketOptions = {}) {
         fullPrompt = prompt.trim();
       }
 
-      console.log("[chat input] (submit-prompt):", fullPrompt);
+      const seq = sequence ?? selectedSequence;
+      console.log("[chat input] (submit-prompt):", fullPrompt, seq ? `sequence: ${seq}` : "");
       socket.emit("submit-prompt", {
         prompt: fullPrompt,
         permissionMode: permissionMode || undefined,
         allowedTools: allowedTools ?? [],
+        ...(seq ? { sequence: seq } : {}),
       });
       addMessage("user", prompt.trim(), refsForDisplay.length ? refsForDisplay : undefined);
     },
-    [waitingForUserInput, claudeRunning, addMessage]
+    [waitingForUserInput, pendingAskQuestion, claudeRunning, addMessage, selectedSequence]
   );
 
   const retryAfterPermission = useCallback(
@@ -345,6 +377,31 @@ export function useSocket(options: UseSocketOptions = {}) {
   const dismissPermission = useCallback(() => {
     setPermissionDenials(null);
   }, []);
+
+  const dismissAskQuestion = useCallback(() => {
+    setPendingAskQuestion(null);
+    setWaitingForUserInput(false);
+  }, []);
+
+  /** Submit selected answers for AskUserQuestion tool and send to backend. */
+  const submitAskQuestionAnswer = useCallback(
+    (answers: Array<{ header: string; selected: string[] }>) => {
+      const pending = pendingAskQuestion;
+      if (!pending || !socketRef.current || !claudeRunning) return;
+      const payload = {
+        tool_use_id: pending.tool_use_id,
+        ...(pending.uuid != null && { uuid: pending.uuid }),
+        answers,
+      };
+      const json = JSON.stringify(payload);
+      socketRef.current.emit("input", json + "\r");
+      const summary = answers.map((a) => `${a.header}: ${a.selected.join(", ")}`).join("; ");
+      addMessage("user", summary);
+      setPendingAskQuestion(null);
+      setWaitingForUserInput(false);
+    },
+    [pendingAskQuestion, claudeRunning, addMessage]
+  );
 
   const runRenderCommand = useCallback((command: string, url: string) => {
     pendingRunCommandRef.current = command.trim();
@@ -404,6 +461,7 @@ export function useSocket(options: UseSocketOptions = {}) {
     messages,
     claudeRunning,
     waitingForUserInput,
+    pendingAskQuestion,
     typingIndicator,
     pendingRender,
     lastRunOptions,
@@ -417,6 +475,8 @@ export function useSocket(options: UseSocketOptions = {}) {
     runCommand,
     runProcessActive,
     submitPrompt,
+    submitAskQuestionAnswer,
+    dismissAskQuestion,
     retryAfterPermission,
     dismissPermission,
     runRenderCommand,
@@ -424,5 +484,8 @@ export function useSocket(options: UseSocketOptions = {}) {
     runUserCommand,
     terminateRunProcess,
     canRunInSelectedTerminal,
+    mockSequences,
+    selectedSequence,
+    setSelectedSequence,
   };
 }

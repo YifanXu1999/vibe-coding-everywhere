@@ -40,8 +40,77 @@ function getWorkspaceCwd() {
 
 const WORKSPACE_CWD = getWorkspaceCwd();
 const SIDEBAR_REFRESH_INTERVAL_MS = parseInt(process.env.SIDEBAR_REFRESH_INTERVAL_MS || "3000", 10) || 3000;
+/** Log directory (from env or workspace). Timestamped filename is created at startup. */
+const CLAUDE_LOG_DIR = process.env.CLAUDE_OUTPUT_LOG
+  ? path.resolve(process.env.CLAUDE_OUTPUT_LOG)
+  : WORKSPACE_CWD;
+function getClaudeLogPath() {
+  let dir = WORKSPACE_CWD;
+  try {
+    const stat = fs.statSync(CLAUDE_LOG_DIR);
+    dir = stat.isDirectory() ? CLAUDE_LOG_DIR : path.dirname(CLAUDE_LOG_DIR);
+  } catch {
+    dir = path.isAbsolute(CLAUDE_LOG_DIR) ? path.dirname(CLAUDE_LOG_DIR) : WORKSPACE_CWD;
+  }
+  const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  return path.join(dir, `claude-output-${ts}.log`);
+}
+/** Path to write Claude output log. One file per server run, with startup timestamp. */
+const CLAUDE_OUTPUT_LOG = getClaudeLogPath();
 // Default permission mode when client does not send one (e.g. bypassPermissions = allow all for testing)
 const DEFAULT_PERMISSION_MODE = process.env.DEFAULT_PERMISSION_MODE || "bypassPermissions";
+
+/** When set (e.g. 1 or true), use mock Claude: replay a log file instead of spawning the real CLI. */
+const USE_MOCK_CLAUDE = /^(1|true|yes)$/i.test(process.env.MOCK_CLAUDE || process.env.USE_MOCK_CLAUDE || "");
+
+/** Directory containing sequence log fixtures (apps/mobile/__tests__/sequences). */
+function getMockSequencesDir() {
+  return path.join(WORKSPACE_CWD, "apps", "mobile", "__tests__", "sequences");
+}
+
+/** List available sequence filenames (without .log) for mock replay. */
+function getMockSequencesList() {
+  const dir = getMockSequencesDir();
+  if (!fs.existsSync(dir)) return [];
+  try {
+    return fs.readdirSync(dir)
+      .filter((f) => f.endsWith(".log"))
+      .map((f) => f.replace(/\.log$/, ""))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+/** Resolve log path from sequence name (filename without .log). */
+function resolveSequencePath(sequence) {
+  if (!sequence || typeof sequence !== "string") return null;
+  const base = sequence.replace(/\.log$/, "");
+  const full = path.join(getMockSequencesDir(), base + ".log");
+  return fs.existsSync(full) ? full : null;
+}
+
+/** Path to log file to replay in mock mode. Supports MOCK_CLAUDE_LOG, MOCK_CLAUDE_SEQUENCE, or defaults. */
+function getMockClaudeLogPath(sequenceFromPayload) {
+  const envPath = process.env.MOCK_CLAUDE_LOG || process.env.MOCK_CLAUDE_OUTPUT_LOG;
+  if (envPath) return path.resolve(envPath);
+  const envSeq = process.env.MOCK_CLAUDE_SEQUENCE;
+  const seq = sequenceFromPayload || (envSeq && String(envSeq).trim()) || null;
+  if (seq) {
+    const resolved = resolveSequencePath(seq);
+    if (resolved) return resolved;
+  }
+  const sequencesDir = getMockSequencesDir();
+  if (fs.existsSync(sequencesDir)) {
+    const defaultSeq = resolveSequencePath("ask-two-questions-purpose-style");
+    if (defaultSeq) return defaultSeq;
+  }
+  const inWorkspaceDir = path.join(WORKSPACE_CWD, "workspace", "claude-output.log");
+  if (fs.existsSync(inWorkspaceDir)) return inWorkspaceDir;
+  const inCwd = path.join(WORKSPACE_CWD, "claude-output.log");
+  if (fs.existsSync(inCwd)) return inCwd;
+  return path.join(WORKSPACE_CWD, "workspace", "mock-claude-output.log");
+}
 
 const PAGE_RENDER_SYSTEM_PROMPT = `
 ## Page-render preview rule
@@ -118,6 +187,15 @@ app.get("/api/config", (_, res) => {
   res.json({ sidebarRefreshIntervalMs: SIDEBAR_REFRESH_INTERVAL_MS });
 });
 
+app.get("/api/mock-sequences", (_, res) => {
+  try {
+    const list = getMockSequencesList();
+    res.json({ sequences: list });
+  } catch (err) {
+    res.status(500).json({ sequences: [] });
+  }
+});
+
 app.get("/api/workspace-path", (_, res) => {
   res.json({ path: WORKSPACE_CWD });
 });
@@ -172,12 +250,58 @@ function emitError(socket, message) {
   socket.emit("output", `\r\n\x1b[31m[Error] ${message}\x1b[0m\r\n`);
 }
 
+/** Replay a Claude output log line-by-line over socket (for MOCK_CLAUDE). Emits claude-started, then output chunks, then exit. Calls onDone when finished. */
+function startMockClaudeReplay(socket, permissionMode, allowedTools, useContinue, onDone, sequenceFromPayload) {
+  const logPath = getMockClaudeLogPath(sequenceFromPayload);
+  if (!fs.existsSync(logPath)) {
+    emitError(socket, `Mock Claude: log file not found: ${logPath}`);
+    if (onDone) onDone();
+    return;
+  }
+  const raw = fs.readFileSync(logPath, "utf8");
+  const lines = raw.split("\n").map((s) => s.trim()).filter((s) => s.startsWith("{"));
+  if (lines.length === 0) {
+    emitError(socket, `Mock Claude: no JSON lines in ${logPath}`);
+    if (onDone) onDone();
+    return;
+  }
+  socket.emit("claude-started", {
+    permissionMode: permissionMode || null,
+    allowedTools: allowedTools || [],
+    useContinue: !!useContinue,
+  });
+  const delayMs = Math.max(0, parseInt(process.env.MOCK_CLAUDE_DELAY_MS || "80", 10));
+  /** Delay before emitting "exit" so the user has time to see/use the AskUserQuestion modal; 0 = emit immediately. */
+  const exitDelayMs = Math.max(0, parseInt(process.env.MOCK_CLAUDE_EXIT_DELAY_MS || "60000", 10));
+  let index = 0;
+  function sendNext() {
+    if (index >= lines.length) {
+      if (exitDelayMs > 0) {
+        setTimeout(() => {
+          socket.emit("exit", { exitCode: 0 });
+          if (onDone) onDone();
+        }, exitDelayMs);
+      } else {
+        socket.emit("exit", { exitCode: 0 });
+        if (onDone) onDone();
+      }
+      return;
+    }
+    socket.emit("output", lines[index] + "\n");
+    index += 1;
+    if (delayMs > 0) setTimeout(sendNext, delayMs);
+    else setImmediate(sendNext);
+  }
+  sendNext();
+}
+
 io.on("connection", (socket) => {
   let ptyProcess = null;
   let hasCompletedFirstRun = false;
+  let mockReplayActive = false;
 
   function claudeProcessRunning() {
-    return ptyProcess !== null;
+    return ptyProcess !== null || mockReplayActive;
   }
 
   function spawnClaude(prompt, permissionMode, allowedTools, useContinue) {
@@ -205,10 +329,20 @@ io.on("connection", (socket) => {
         env: { ...process.env, TERM: "xterm-256color" },
       });
 
+      let logStream = null;
+      try {
+        logStream = fs.createWriteStream(CLAUDE_OUTPUT_LOG, { flags: "a" });
+        const header = `\n--- Claude session started ${new Date().toISOString()} ---\n`;
+        logStream.write(header);
+      } catch (err) {
+        console.warn("[claude-log] Failed to create log file:", err.message);
+      }
+
       ptyProcess.onData((data) => {
         socket.emit("output", data);
         const text = stripAnsi(data);
         if (text) process.stdout.write(text);
+        if (logStream?.writable) logStream.write(data);
       });
 
       socket.emit("claude-started", {
@@ -220,6 +354,10 @@ io.on("connection", (socket) => {
       ptyProcess.onExit(({ exitCode }) => {
         hasCompletedFirstRun = true;
         ptyProcess = null;
+        if (logStream?.writable) {
+          logStream.write(`\n--- Session ended (exit ${exitCode}) ${new Date().toISOString()} ---\n`);
+          logStream.end();
+        }
         socket.emit("exit", { exitCode });
       });
     } catch (err) {
@@ -239,7 +377,6 @@ io.on("connection", (socket) => {
       return;
     }
     console.log("[submit-prompt] chat input (user prompt):", prompt);
-    console.log("[submit-prompt] system prompt (append):", PAGE_RENDER_SYSTEM_PROMPT);
     const permissionMode =
       typeof payload?.permissionMode === "string" && payload.permissionMode.trim()
         ? payload.permissionMode.trim()
@@ -248,6 +385,23 @@ io.on("connection", (socket) => {
       ? payload.allowedTools.filter((t) => typeof t === "string" && t.trim()).map((t) => t.trim())
       : [];
     const useContinue = hasCompletedFirstRun;
+
+    if (USE_MOCK_CLAUDE) {
+      if (mockReplayActive) {
+        emitError(socket, "Mock Claude replay already in progress. Wait for it to finish.");
+        return;
+      }
+      mockReplayActive = true;
+      const seq = payload?.sequence && String(payload.sequence).trim() ? String(payload.sequence).trim() : null;
+      const logPath = getMockClaudeLogPath(seq);
+      console.log("[submit-prompt] mock Claude: replaying log", logPath, seq ? `(sequence: ${seq})` : "");
+      startMockClaudeReplay(socket, permissionMode || null, allowedTools, useContinue, () => {
+        mockReplayActive = false;
+        hasCompletedFirstRun = true;
+      }, seq);
+      return;
+    }
+    console.log("[submit-prompt] system prompt (append):", PAGE_RENDER_SYSTEM_PROMPT);
     spawnClaude(prompt, permissionMode || null, allowedTools, useContinue);
   });
 
