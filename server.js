@@ -10,38 +10,127 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WORKSPACE_CWD = __dirname;
 const PORT = process.env.PORT || 3456;
+const SIDEBAR_REFRESH_INTERVAL_MS = parseInt(process.env.SIDEBAR_REFRESH_INTERVAL_MS || "3000", 10) || 3000;
 
 const PAGE_RENDER_SYSTEM_PROMPT = `
-## MANDATORY: Page-render preview rule (non-negotiable)
+## Page-render preview rule
 
-When the user's task produces or modifies content that is meant to be viewed in a browser (HTML, static site, dev server, etc.)
-**Query Rewrite:**
-1. If user does not specify the port to render, render it at a random available port.
-**Verification:**
-1. Must test the command(s) in a fresh terminal at the workspace directory. And then return full commands to the user.
-2. Record the logs of the command(s) execution. 
-3. Maximum of 3 attempts to verify the command(s).
-4. If no permission denied, then verified.
-**Output Format if verified:**
-1. The line MUST be exactly in this form (no variations):
-   Run the following command for render: "<command(s)>"
-   URL for preview: "<url_to_render>"
-2. <command(s)> MUST be the full-chain, copy-pastable command(s) that the user runs from a fresh terminal at the workspace directory to serve/host the webpage or website, instead of just running a command to open the page.
-3. <url_to_render> MUST be the URL of the webpage or website that the user can access to view the rendered content after running the command(s)
-4. The output should only contain the command(s) and the url to render, no other text.
-**Output Format if not verified:**
-1. The line MUST be exactly in this form (no variations):
-   Need permission for the following commands: "<command(s)>"
-2. <command(s)> MUST be the full-chain, copy-pastable command(s) that the user runs from a fresh terminal at the workspace directory to serve/host the webpage or website, instead of just running a command to open the page.
-3. The output should only contain the command(s), no other text.
+When the task produces browser-viewable content (HTML, static site, dev server):
+- Use a random port if the user does not specify one.
+- Test the command(s) in a fresh terminal at workspace root (up to 3 attempts). Record logs.
+- **Decide from the test result only:** Verified = command(s) ran with no errors. Not verified = "permission denied", "access denied", "EACCES", or any failure in the logs.
+- **Output exactly one format.** When not verified, you must NOT output "Run the following command for render" or "URL for preview" — those lines are only for the verified case.
+
+**If verified** (output only these two lines, no other text):
+Run the following command for render: "<command(s)>"
+URL for preview: "<url_to_render>"
+
+**If not verified** (output only this line, no other text):
+Need permission for the following commands: "<command(s)>"
+
+<command(s)> = full, copy-pastable command(s) from workspace root to serve the page. <url_to_render> = URL to view after running.
 `
+const ANSI_REGEX =
+  /\x1B\[[0-9;?]*[ -/]*[@-~]|\x1B\][^\x07]*(?:\x07|\x1B\\)|\x1B[@-_]|\x1B.|[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
+
+function stripAnsi(str) {
+  if (typeof str !== "string") return "";
+  return str.replace(ANSI_REGEX, "");
+}
+
+const SKIP_DIRS = new Set([
+  "node_modules", ".git", ".idea", ".vscode", "dist", "build", "out",
+  ".cache", "coverage", ".nyc_output", ".expo"
+]);
+
+function buildWorkspaceTree(dirPath, basePath = "") {
+  const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+  const items = [];
+  for (const entry of entries) {
+    if (entry.name === ".DS_Store" || entry.name === "Thumbs.db") continue;
+    if (SKIP_DIRS.has(entry.name)) continue;
+    const relPath = basePath ? `${basePath}/${entry.name}` : entry.name;
+    const fullPath = path.join(dirPath, entry.name);
+    if (entry.isDirectory()) {
+      try {
+        const children = buildWorkspaceTree(fullPath, relPath);
+        items.push({ name: entry.name, path: relPath, type: "folder", children });
+      } catch (_) {
+        items.push({ name: entry.name, path: relPath, type: "folder", children: [] });
+      }
+    } else {
+      items.push({ name: entry.name, path: relPath, type: "file" });
+    }
+  }
+  items.sort((a, b) => {
+    if (a.type !== b.type) return a.type === "folder" ? -1 : 1;
+    return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+  });
+  return items;
+}
+
 const app = express();
 const httpServer = createServer(app);
 
-app.use(express.static(path.join(__dirname, "public")));
+app.use((req, res, next) => {
+  if (req.path.startsWith("/api/")) {
+    const ts = new Date().toISOString();
+    console.log(`[API] ${ts} ${req.method} ${req.path}`, req.query && Object.keys(req.query).length ? req.query : "");
+    res.on("finish", () => {
+      console.log(`[API] ${ts} ${req.method} ${req.path} -> ${res.statusCode}`);
+    });
+  }
+  next();
+});
 
-app.get("/", (_, res) => {
-  res.sendFile(path.join(__dirname, "public", "index.html"));
+app.get("/api/config", (_, res) => {
+  res.json({ sidebarRefreshIntervalMs: SIDEBAR_REFRESH_INTERVAL_MS });
+});
+
+app.get("/api/workspace-path", (_, res) => {
+  res.json({ path: WORKSPACE_CWD });
+});
+
+app.get("/api/workspace-tree", (_, res) => {
+  try {
+    const tree = buildWorkspaceTree(WORKSPACE_CWD);
+    res.json({ root: path.basename(WORKSPACE_CWD), tree });
+  } catch (err) {
+    res.status(500).json({ error: err.message || "Failed to read workspace" });
+  }
+});
+
+const IMAGE_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg"]);
+
+app.get("/api/workspace-file", (req, res) => {
+  const relPath = req.query.path;
+  if (typeof relPath !== "string" || !relPath.trim()) {
+    return res.status(400).json({ error: "Missing or invalid path" });
+  }
+  try {
+    const normalized = path.normalize(relPath).replace(/^(\.\.(\/|\\|$))+/, "");
+    const fullPath = path.join(WORKSPACE_CWD, normalized);
+    if (!fullPath.startsWith(WORKSPACE_CWD)) {
+      return res.status(403).json({ error: "Path outside workspace" });
+    }
+    const stat = fs.statSync(fullPath);
+    if (!stat.isFile()) {
+      return res.status(400).json({ error: "Not a file" });
+    }
+    const ext = path.extname(normalized).toLowerCase().replace(/^\./, "");
+    const isImage = IMAGE_EXT.has(ext);
+    if (isImage) {
+      const buffer = fs.readFileSync(fullPath);
+      const content = buffer.toString("base64");
+      res.json({ path: normalized, content, isImage: true });
+    } else {
+      const content = fs.readFileSync(fullPath, "utf8");
+      res.json({ path: normalized, content });
+    }
+  } catch (err) {
+    if (err.code === "ENOENT") return res.status(404).json({ error: "File not found" });
+    res.status(500).json({ error: err.message || "Failed to read file" });
+  }
 });
 
 const io = new Server(httpServer, {
@@ -87,6 +176,8 @@ io.on("connection", (socket) => {
 
       ptyProcess.onData((data) => {
         socket.emit("output", data);
+        const text = stripAnsi(data);
+        if (text) process.stdout.write(text);
       });
 
       socket.emit("claude-started", {
@@ -116,6 +207,8 @@ io.on("connection", (socket) => {
       emitError(socket, "Prompt cannot be empty.");
       return;
     }
+    console.log("[submit-prompt] chat input (user prompt):", prompt);
+    console.log("[submit-prompt] system prompt (append):", PAGE_RENDER_SYSTEM_PROMPT);
     const permissionMode = typeof payload?.permissionMode === "string" ? payload.permissionMode.trim() : null;
     const allowedTools = Array.isArray(payload?.allowedTools)
       ? payload.allowedTools.filter((t) => typeof t === "string" && t.trim()).map((t) => t.trim())
@@ -125,7 +218,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("input", (data) => {
-    console.log("[input] full input:", JSON.stringify(data));
+    console.log("[input] chat input (user reply):", typeof data === "string" ? data.replace(/\r$/, "") : JSON.stringify(data));
     if (ptyProcess) {
       ptyProcess.write(data);
     }
@@ -141,23 +234,53 @@ io.on("connection", (socket) => {
     console.log("[claude-debug]", JSON.stringify(payload, null, 2));
   });
 
+  let runRenderChild = null;
+
   socket.on("run-render-command", ({ command, url }) => {
     const cmd = typeof command === "string" ? command.trim() : "";
     if (!cmd) {
       socket.emit("run-render-result", { ok: false, error: "No command provided." });
       return;
     }
+    if (runRenderChild) {
+      runRenderChild.kill();
+      runRenderChild = null;
+    }
     try {
       const child = spawn(cmd, {
         shell: true,
         cwd: WORKSPACE_CWD,
-        detached: true,
-        stdio: "ignore",
+        stdio: ["ignore", "pipe", "pipe"],
       });
-      child.unref();
+      runRenderChild = child;
+      child.stdout?.setEncoding("utf8");
+      child.stderr?.setEncoding("utf8");
+      child.stdout?.on("data", (chunk) => {
+        socket.emit("run-render-stdout", { chunk: String(chunk) });
+      });
+      child.stderr?.on("data", (chunk) => {
+        socket.emit("run-render-stderr", { chunk: String(chunk) });
+      });
+      child.on("exit", (code, signal) => {
+        runRenderChild = null;
+        socket.emit("run-render-exit", { code, signal: signal || null });
+      });
+      child.on("error", (err) => {
+        runRenderChild = null;
+        socket.emit("run-render-stderr", { chunk: `[error] ${err.message}\n` });
+        socket.emit("run-render-result", { ok: false, error: err.message || "Failed to run command." });
+      });
+      // Emit "started" immediately so client can show message and open in-app preview (dev servers may never exit)
       socket.emit("run-render-result", { ok: true, url: url || "" });
     } catch (err) {
       socket.emit("run-render-result", { ok: false, error: err.message || "Failed to run command." });
+    }
+  });
+
+  socket.on("run-render-terminate", () => {
+    if (runRenderChild) {
+      runRenderChild.kill();
+      runRenderChild = null;
     }
   });
 

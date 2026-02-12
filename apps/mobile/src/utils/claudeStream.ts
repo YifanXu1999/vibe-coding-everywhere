@@ -3,14 +3,23 @@ const ANSI_REGEX =
 
 export const RENDER_CMD_REGEX = /Run the following command for render:\s*"([^"]+)"/i;
 export const RENDER_URL_REGEX = /URL for preview:\s*"([^"]+)"/i;
+/** Message is "not verified" (need permission) — do not show verified-style run bar. */
+export const NEED_PERMISSION_REGEX = /Need permission for the following commands:/i;
 
 export function stripAnsi(value: string): string {
   if (!value) return "";
   return value.replace(ANSI_REGEX, "");
 }
 
+/** Strip trailing incomplete XML/HTML tag (e.g. "<u" from truncated "<u>" or "<url...") that appears at end of chat. */
+export function stripTrailingIncompleteTag(value: string): string {
+  if (!value || typeof value !== "string") return value;
+  return value.replace(/\s*<\w*$/, "");
+}
+
 export function extractRenderCommandAndUrl(text: string | null | undefined): { command: string; url: string } | null {
   if (!text || typeof text !== "string") return null;
+  if (NEED_PERMISSION_REGEX.test(text)) return null;
   const cmdMatch = text.match(RENDER_CMD_REGEX);
   const urlMatch = text.match(RENDER_URL_REGEX);
   if (!cmdMatch?.[1] || !urlMatch?.[1]) return null;

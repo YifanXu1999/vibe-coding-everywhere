@@ -7,17 +7,146 @@ const statusDot = document.getElementById("status-dot");
 const statusLabel = document.getElementById("status-label");
 const permissionContainer = document.getElementById("permission-denial-container");
 const permissionModeSelect = document.getElementById("permission-mode");
-const chatTitleEl = document.getElementById("chat-title");
-const btnOptions = document.getElementById("btn-options");
-const optionsPopover = document.getElementById("options-popover");
-const optionsList = document.getElementById("options-list");
-const optionsHint = document.getElementById("options-hint");
 const renderPreviewBar = document.getElementById("render-preview-bar");
 const renderCommandEl = document.getElementById("render-command");
 const renderUrlEl = document.getElementById("render-url");
 const btnRunRender = document.getElementById("btn-run-render");
+const sidebar = document.getElementById("sidebar");
+const sidebarTree = document.getElementById("sidebar-tree");
+const sidebarWorkspaceName = document.getElementById("sidebar-workspace-name");
+const sidebarToggle = document.getElementById("sidebar-toggle");
 
 const socket = io();
+
+/* --- Sidebar (VSCode-style file explorer) --- */
+let sidebarRefreshIntervalMs = 3000;
+let sidebarRefreshTimer = null;
+let expandedPaths = new Set([""]);
+
+async function fetchSidebarConfig() {
+  try {
+    const res = await fetch("/api/config");
+    const cfg = await res.json();
+    if (cfg.sidebarRefreshIntervalMs && cfg.sidebarRefreshIntervalMs > 0) {
+      sidebarRefreshIntervalMs = cfg.sidebarRefreshIntervalMs;
+    }
+  } catch (_) {}
+}
+
+async function fetchWorkspaceTree() {
+  try {
+    const res = await fetch("/api/workspace-tree");
+    const data = await res.json();
+    if (data.tree && data.root) return data;
+  } catch (_) {}
+  return null;
+}
+
+function renderTreeItem(item, depth = 0) {
+  if (item.type === "folder") {
+    const wrapper = document.createElement("div");
+    wrapper.className = "sidebar-tree-folder";
+
+    const row = document.createElement("div");
+    row.className = "sidebar-tree-item";
+    row.style.setProperty("--depth", String(depth));
+    row.dataset.path = item.path;
+    row.dataset.type = "folder";
+
+    const isExpanded = expandedPaths.has(item.path);
+    const icon = document.createElement("span");
+    icon.className = `tree-icon ${isExpanded ? "folder-open" : "folder-closed"}`;
+    const label = document.createElement("span");
+    label.className = "tree-label";
+    label.textContent = item.name;
+    row.appendChild(icon);
+    row.appendChild(label);
+
+    row.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (expandedPaths.has(item.path)) expandedPaths.delete(item.path);
+      else expandedPaths.add(item.path);
+      renderSidebarTree(currentTreeData);
+    });
+
+    wrapper.appendChild(row);
+
+    const childrenDiv = document.createElement("div");
+    childrenDiv.className = `sidebar-tree-children ${isExpanded ? "" : "hidden"}`;
+    if (item.children && item.children.length) {
+      for (const child of item.children) {
+        childrenDiv.appendChild(renderTreeItem(child, depth + 1));
+      }
+    }
+    wrapper.appendChild(childrenDiv);
+    return wrapper;
+  }
+
+  const row = document.createElement("div");
+  row.className = "sidebar-tree-item";
+  row.style.setProperty("--depth", String(depth));
+  row.dataset.path = item.path;
+  row.dataset.type = "file";
+  const icon = document.createElement("span");
+  icon.className = "tree-icon file";
+  const label = document.createElement("span");
+  label.className = "tree-label";
+  label.textContent = item.name;
+  row.appendChild(icon);
+  row.appendChild(label);
+  return row;
+}
+
+let currentTreeData = null;
+
+function renderSidebarTree(data) {
+  if (!data || !sidebarTree) return;
+  currentTreeData = data;
+  sidebarWorkspaceName.textContent = data.root || "Workspace";
+  sidebarTree.innerHTML = "";
+  for (const item of data.tree) {
+    sidebarTree.appendChild(renderTreeItem(item, 0));
+  }
+}
+
+async function refreshSidebar() {
+  const data = await fetchWorkspaceTree();
+  if (data) renderSidebarTree(data);
+}
+
+function startSidebarRefresh() {
+  if (sidebarRefreshTimer) clearInterval(sidebarRefreshTimer);
+  if (sidebarRefreshIntervalMs > 0) {
+    sidebarRefreshTimer = setInterval(refreshSidebar, sidebarRefreshIntervalMs);
+  }
+}
+
+function isMobileView() {
+  return typeof window !== "undefined" && window.matchMedia("(max-width: 900px)").matches;
+}
+
+async function initSidebar() {
+  await fetchSidebarConfig();
+  await refreshSidebar();
+  startSidebarRefresh();
+
+  if (isMobileView()) {
+    sidebar?.classList.add("collapsed");
+  }
+
+  sidebarToggle?.addEventListener("click", () => {
+    sidebar?.classList.toggle("collapsed");
+  });
+
+  const sidebarOpenBtn = document.getElementById("sidebar-open-btn");
+  const sidebarOverlay = document.getElementById("sidebar-overlay");
+  sidebarOpenBtn?.addEventListener("click", () => {
+    sidebar?.classList.remove("collapsed");
+  });
+  sidebarOverlay?.addEventListener("click", () => {
+    sidebar?.classList.add("collapsed");
+  });
+}
 
 let claudeRunning = false;
 /** Options used for the current or last Claude run (set by server on claude-started). */
@@ -28,7 +157,7 @@ let currentAssistantMessage = null;
 /** When set, the response contained render command + URL; show the run-preview bar. */
 let pendingRender = null;
 
-const DEFAULT_PLACEHOLDER = "Reply...";
+const DEFAULT_PLACEHOLDER = "How can I help you today?";
 // Remove PTY control/escape sequences sent by the Claude CLI (e.g. cursor hide/show codes).
 const ANSI_REGEX =
   /\x1B\[[0-9;?]*[ -/]*[@-~]|\x1B\][^\x07]*(?:\x07|\x1B\\)|\x1B[@-_]|\x1B.|[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
@@ -129,6 +258,12 @@ function showRenderPreviewBar() {
   renderUrlEl.href = pendingRender.url;
   renderUrlEl.textContent = pendingRender.url;
   renderPreviewBar.hidden = false;
+  // Keep sidebar collapsed and bring the code/main page to front
+  sidebar?.classList.add("collapsed");
+  const pageEl = document.querySelector(".page");
+  if (pageEl) {
+    pageEl.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 }
 
 function hideRenderPreviewBar() {
@@ -432,61 +567,21 @@ function getCurrentUiOptions() {
   };
 }
 
-function renderOptionsPopover() {
-  const ui = getCurrentUiOptions();
-  const run = lastRunOptions;
-  optionsList.innerHTML = "";
-  const addRow = (dt, dd) => {
-    const tr = document.createElement("div");
-    tr.className = "options-row";
-    tr.innerHTML = `<dt>${escapeHtml(dt)}</dt><dd>${escapeHtml(dd)}</dd>`;
-    optionsList.appendChild(tr);
-  };
-  addRow("Permission (next run)", ui.label);
-  addRow("Allowed tools (last run)", run.allowedTools.length ? run.allowedTools.join(", ") : "None");
-  addRow("Continue mode (last run)", run.useContinue ? "Yes (-c)" : "No");
-  optionsHint.textContent = claudeRunning
-    ? "Current run is using the options above (last run = this run)."
-    : "“Last run” reflects the previous Claude session.";
-}
-
-function toggleOptionsPopover() {
-  if (!optionsPopover) return;
-  const isHidden = optionsPopover.hidden;
-  if (isHidden) {
-    renderOptionsPopover();
-    optionsPopover.hidden = false;
-  } else {
-    optionsPopover.hidden = true;
-  }
-}
-
-function closeOptionsPopoverOnClickOutside(e) {
-  if (optionsPopover?.hidden) return;
-  if (!optionsPopover.contains(e.target) && !btnOptions.contains(e.target)) {
-    optionsPopover.hidden = true;
-  }
-}
-
 document.getElementById("btn-attach")?.addEventListener("click", () => {
   addSystemMessage("Attachments are not supported in this prototype.");
 });
-
-document.getElementById("btn-share")?.addEventListener("click", () => {
-  addSystemMessage("Share functionality coming soon.");
-});
-
-btnOptions?.addEventListener("click", (e) => {
-  e.preventDefault();
-  toggleOptionsPopover();
-});
-document.addEventListener("click", closeOptionsPopoverOnClickOutside);
 
 btnRunRender?.addEventListener("click", () => {
   if (!pendingRender) return;
   const { command, url } = pendingRender;
   const msg = `Run the following command and open the preview URL?\n\nCommand: ${command}\n\nURL: ${url}`;
   if (!confirm(msg)) return;
+  // Keep sidebar collapsed and bring code page to front (do not unfold sidebar)
+  sidebar?.classList.add("collapsed");
+  const pageEl = document.querySelector(".page");
+  if (pageEl) {
+    pageEl.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
   socket.emit("run-render-command", { command, url });
   setTimeout(() => {
     window.open(url, "_blank", "noopener,noreferrer");
@@ -496,4 +591,5 @@ btnRunRender?.addEventListener("click", () => {
 setConnectionState(false);
 refreshInputState();
 setTypingIndicator(false);
-chatTitleEl.textContent = "Greeting";
+
+initSidebar();

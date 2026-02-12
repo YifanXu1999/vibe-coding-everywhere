@@ -1,42 +1,73 @@
-import React from "react";
-import { View, Text, StyleSheet, TouchableOpacity, Linking } from "react-native";
+import React, { useState, useEffect } from "react";
+import { View, Text, TextInput, StyleSheet, TouchableOpacity, Platform } from "react-native";
 import { theme } from "../theme";
 import type { PendingRender } from "../hooks/useSocket";
 
 interface RenderPreviewBarProps {
   pendingRender: PendingRender | null;
   onRunRender: (command: string, url: string) => void;
+  /** Open preview URL in-app (WebView modal) — integrated with chat. */
+  onOpenPreviewInApp: (url: string) => void;
 }
 
-export function RenderPreviewBar({ pendingRender, onRunRender }: RenderPreviewBarProps) {
+export function RenderPreviewBar({
+  pendingRender,
+  onRunRender,
+  onOpenPreviewInApp,
+}: RenderPreviewBarProps) {
+  const [editedCommand, setEditedCommand] = useState("");
+  const [editedUrl, setEditedUrl] = useState("");
+
+  useEffect(() => {
+    if (pendingRender) {
+      setEditedCommand(pendingRender.command ?? "");
+      setEditedUrl(pendingRender.url ?? "");
+    }
+  }, [pendingRender?.command, pendingRender?.url]);
+
   if (!pendingRender) return null;
 
-  const { command, url } = pendingRender;
+  const handleRunOnly = () => {
+    onRunRender(editedCommand.trim(), editedUrl.trim());
+  };
 
-  const handlePress = () => {
-    onRunRender(command, url);
-    setTimeout(() => {
-      Linking.openURL(url).catch(() => {});
-    }, 800);
+  const handlePreviewOnly = () => {
+    const url = editedUrl.trim();
+    if (url) onOpenPreviewInApp(url);
   };
 
   return (
     <View style={styles.container}>
       <View style={styles.content}>
-        <Text style={styles.row}>
-          <Text style={styles.label}>Command: </Text>
-          <Text style={styles.command}>{command}</Text>
-        </Text>
-        <Text style={styles.row}>
-          <Text style={styles.label}>URL: </Text>
-          <Text style={styles.url} onPress={() => Linking.openURL(url)}>
-            {url}
-          </Text>
-        </Text>
+        <Text style={styles.label}>Command:</Text>
+        <TextInput
+          style={styles.commandInput}
+          value={editedCommand}
+          onChangeText={setEditedCommand}
+          placeholder="Command to run..."
+          placeholderTextColor={theme.textMuted}
+          multiline
+        />
+        <Text style={styles.label}>URL:</Text>
+        <TextInput
+          style={styles.urlInput}
+          value={editedUrl}
+          onChangeText={setEditedUrl}
+          placeholder="Preview URL (e.g. http://localhost:53721/red.html)"
+          placeholderTextColor={theme.textMuted}
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="url"
+        />
       </View>
-      <TouchableOpacity style={styles.btn} onPress={handlePress} activeOpacity={0.8}>
-        <Text style={styles.btnText}>Run command & open preview</Text>
-      </TouchableOpacity>
+      <View style={styles.buttons}>
+        <TouchableOpacity style={styles.btnSecondary} onPress={handleRunOnly} activeOpacity={0.8}>
+          <Text style={styles.btnSecondaryText}>Run command</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.btn} onPress={handlePreviewOnly} activeOpacity={0.8}>
+          <Text style={styles.btnText}>Preview</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
@@ -51,30 +82,44 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   content: {
-    gap: 10,
-  },
-  row: {
-    fontSize: 14,
-    lineHeight: 20,
+    gap: 6,
   },
   label: {
+    fontSize: 12,
     fontWeight: "600",
+    color: theme.textMuted,
+  },
+  commandInput: {
+    fontSize: 13,
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+    backgroundColor: "rgba(255,255,255,0.9)",
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: theme.borderColor,
+    color: theme.textPrimary,
+    minHeight: 40,
+    maxHeight: 100,
+  },
+  urlInput: {
+    fontSize: 13,
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+    backgroundColor: "rgba(255,255,255,0.9)",
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: theme.borderColor,
     color: theme.textPrimary,
   },
-  command: {
-    fontSize: 13,
-    backgroundColor: "rgba(255,255,255,0.8)",
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    borderRadius: 6,
-  },
-  url: {
-    color: theme.accent,
-    textDecorationLine: "underline",
+  buttons: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 10,
+    flexWrap: "wrap",
   },
   btn: {
-    alignSelf: "flex-start",
-    marginTop: 8,
     paddingVertical: 8,
     paddingHorizontal: 18,
     borderRadius: 999,
@@ -84,6 +129,19 @@ const styles = StyleSheet.create({
   },
   btnText: {
     color: "#fff",
+    fontWeight: "500",
+    fontSize: 14,
+  },
+  btnSecondary: {
+    paddingVertical: 8,
+    paddingHorizontal: 18,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: theme.accent,
+    backgroundColor: "transparent",
+  },
+  btnSecondaryText: {
+    color: theme.accent,
     fontWeight: "500",
     fontSize: 14,
   },

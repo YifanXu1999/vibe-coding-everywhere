@@ -1,6 +1,8 @@
 export const theme = {
   beigeBg: "#fdf7ee",
   cardBg: "#fffdf9",
+  /** Background for chat input footer and aligned surfaces (header, page) */
+  surfaceBg: "#ffffff",
   borderColor: "#ece2d3",
   textPrimary: "#2f1f0f",
   textMuted: "#7a6656",

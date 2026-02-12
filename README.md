@@ -75,12 +75,10 @@ Check status:
 tailscale status --json
 ```
 
-### Port configuration
+### Environment configuration
 
-By default the server uses port 3456. Override with:
-
-- `PORT` or `SERVER_PORT`: used by the funnel script to build the server URL
-- Example: `PORT=4000 npm run dev:mobile:funnel`
+- **PORT** / **SERVER_PORT**: Server port (default 3456). Used by the funnel script to build the server URL.
+- **SIDEBAR_REFRESH_INTERVAL_MS**: Web client sidebar file tree auto-refresh interval in milliseconds (default 3000). Set to `0` to disable auto-refresh.
 
 ## API / Socket events
 
