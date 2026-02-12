@@ -1,5 +1,12 @@
 import React, { useEffect, useRef } from "react";
-import { View, Text, StyleSheet, ScrollView, Platform, TouchableOpacity } from "react-native";
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  Platform,
+  TouchableOpacity,
+} from "react-native";
 import { theme } from "../theme";
 
 export type RunOutputLine = { type: "stdout" | "stderr"; text: string };
@@ -7,11 +14,17 @@ export type RunOutputLine = { type: "stdout" | "stderr"; text: string };
 interface RunOutputViewProps {
   lines: RunOutputLine[];
   title?: string;
+  /** When provided, show the executed command above the output (always visible). */
+  command?: string | null;
   maxHeight?: number;
   /** When provided, show "Terminate" button; called to kill the run process and clear output. */
   onTerminate?: () => void;
   /** When true, show container with placeholder when lines are empty (e.g. in integrated Run & Preview page). */
   showWhenEmpty?: boolean;
+  /** When provided, show a fullscreen button in the title row that calls this. */
+  onFullScreen?: () => void;
+  /** When true, allow the output area to grow (e.g. in fullscreen modal). */
+  flexOutput?: boolean;
 }
 
 /** Strip ANSI escape sequences for display. */
@@ -19,7 +32,16 @@ function stripAnsi(str: string): string {
   return str.replace(/\x1B\[[0-9;?]*[ -/]*[@-~]|\x1B\][^\x07]*(?:\x07|\x1B\\)|\x1B[@-_]|\x1B.|[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
 }
 
-export function RunOutputView({ lines, title = "Terminal output", maxHeight = 200, onTerminate, showWhenEmpty }: RunOutputViewProps) {
+export function RunOutputView({
+  lines,
+  title = "Terminal output",
+  command,
+  maxHeight = 200,
+  onTerminate,
+  showWhenEmpty,
+  onFullScreen,
+  flexOutput,
+}: RunOutputViewProps) {
   const scrollRef = useRef<ScrollView>(null);
 
   useEffect(() => {
@@ -29,40 +51,61 @@ export function RunOutputView({ lines, title = "Terminal output", maxHeight = 20
   }, [lines.length]);
 
   const isEmpty = lines.length === 0;
-  if (isEmpty && !showWhenEmpty) return null;
+  const showContainer = isEmpty && !showWhenEmpty && !command;
+  if (showContainer) return null;
+
+  const scrollStyle = flexOutput ? styles.scrollFlex : [styles.scroll, { maxHeight }];
+  const emptyStyle = flexOutput ? [styles.scroll, styles.scrollFlex, styles.emptyPlaceholder] : [styles.scroll, styles.emptyPlaceholder, { maxHeight }];
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, flexOutput && styles.containerFlex]}>
       <View style={styles.titleRow}>
         <Text style={styles.title}>{title}</Text>
-        {onTerminate && (lines.length > 0 || showWhenEmpty) && (
-          <TouchableOpacity onPress={onTerminate} hitSlop={8}>
-            <Text style={styles.terminateText}>Terminate</Text>
-          </TouchableOpacity>
-        )}
+        <View style={styles.titleActions}>
+          {onFullScreen && (
+            <TouchableOpacity onPress={onFullScreen} hitSlop={8} style={styles.titleActionButton}>
+              <Text style={styles.fullScreenIcon}>⛶</Text>
+            </TouchableOpacity>
+          )}
+          {onTerminate && (lines.length > 0 || showWhenEmpty || command) && (
+            <TouchableOpacity onPress={onTerminate} hitSlop={8} style={styles.terminateButton}>
+              <Text style={styles.terminateIcon}>×</Text>
+              <Text style={styles.terminateText}>Terminate</Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
       {isEmpty ? (
-        <View style={[styles.scroll, styles.emptyPlaceholder, { maxHeight }]}>
+        <View style={emptyStyle}>
           <Text style={styles.emptyPlaceholderText}>Run command to see output</Text>
         </View>
       ) : (
-      <ScrollView
-        ref={scrollRef}
-        style={[styles.scroll, { maxHeight }]}
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator
-        nestedScrollEnabled
-      >
-        {lines.map((line, i) => (
-          <Text
-            key={i}
-            style={[styles.line, line.type === "stderr" ? styles.stderr : styles.stdout]}
-            selectable
-          >
-            {stripAnsi(line.text)}
+        <ScrollView
+          ref={scrollRef}
+          style={scrollStyle}
+          contentContainerStyle={styles.content}
+          showsVerticalScrollIndicator={false}
+          showsHorizontalScrollIndicator={false}
+          nestedScrollEnabled
+        >
+          {lines.map((line, i) => (
+            <Text
+              key={i}
+              style={[styles.line, line.type === "stderr" ? styles.stderr : styles.stdout]}
+              selectable
+            >
+              {stripAnsi(line.text)}
+            </Text>
+          ))}
+        </ScrollView>
+      )}
+      {command != null && command !== "" && (
+        <View style={styles.commandBar}>
+          <Text style={styles.commandPrefix}>$ </Text>
+          <Text style={styles.commandText} selectable numberOfLines={2}>
+            {command}
           </Text>
-        ))}
-      </ScrollView>
+        </View>
       )}
     </View>
   );
@@ -73,9 +116,13 @@ const styles = StyleSheet.create({
     width: "100%",
     borderWidth: 1,
     borderColor: theme.borderColor,
-    backgroundColor: "#1e1e1e",
+    backgroundColor: theme.beigeBg,
     borderRadius: 10,
     overflow: "hidden",
+  },
+  containerFlex: {
+    flex: 1,
+    minHeight: 0,
   },
   titleRow: {
     flexDirection: "row",
@@ -91,12 +138,60 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: theme.textMuted,
   },
+  titleActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  titleActionButton: {
+    padding: 4,
+  },
+  fullScreenIcon: {
+    fontSize: 16,
+    color: theme.textMuted,
+  },
+  commandBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderTopWidth: 1,
+    borderTopColor: theme.borderColor,
+    backgroundColor: theme.beigeBg,
+  },
+  commandPrefix: {
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+    fontSize: 12,
+    color: theme.textMuted,
+    marginRight: 4,
+  },
+  commandText: {
+    flex: 1,
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+    fontSize: 12,
+    color: theme.textPrimary,
+  },
+  terminateButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  terminateIcon: {
+    fontSize: 18,
+    fontWeight: "600",
+    color: theme.accent,
+    lineHeight: 20,
+  },
   terminateText: {
     fontSize: 12,
     color: theme.accent,
   },
   scroll: {
     maxHeight: 200,
+  },
+  scrollFlex: {
+    flex: 1,
+    minHeight: 120,
   },
   content: {
     padding: 10,
@@ -108,10 +203,10 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   stdout: {
-    color: "#d4d4d4",
+    color: theme.textPrimary,
   },
   stderr: {
-    color: "#f48771",
+    color: theme.danger,
   },
   emptyPlaceholder: {
     justifyContent: "center",

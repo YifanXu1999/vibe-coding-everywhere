@@ -35,6 +35,13 @@ export interface InputPanelProps {
   onSubmit: (prompt: string, permissionMode?: string) => void;
   pendingCodeRefs?: PendingCodeRef[];
   onRemoveCodeRef?: (index: number) => void;
+  /** When true, show green dot on terminal button (run output exists). */
+  showTerminalButton?: boolean;
+  /** Running state: show green dot on terminal button. */
+  runProcessActive?: boolean;
+  onShowTerminal?: () => void;
+  /** Open full-screen terminal. Button is shown beside model name (Sonnet 4.5). */
+  onOpenTerminal?: () => void;
 }
 
 export function InputPanel({
@@ -46,6 +53,10 @@ export function InputPanel({
   onSubmit,
   pendingCodeRefs = [],
   onRemoveCodeRef,
+  showTerminalButton = false,
+  runProcessActive = false,
+  onShowTerminal,
+  onOpenTerminal,
 }: InputPanelProps) {
   const [prompt, setPrompt] = useState("");
 
@@ -113,6 +124,17 @@ export function InputPanel({
             <Text style={styles.modelName}>Sonnet 4.5</Text>
             <Text style={styles.chevron}>▼</Text>
           </View>
+          {onOpenTerminal && (
+            <TouchableOpacity
+              style={[styles.btnTerminal, runProcessActive && styles.btnTerminalActive]}
+              onPress={onOpenTerminal}
+              activeOpacity={0.8}
+              accessibilityLabel="Open terminal"
+            >
+              <Text style={styles.btnTerminalText}>⌘</Text>
+              {runProcessActive && <View style={styles.terminalRunningDot} />}
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
             style={[styles.btnSend, disabled && styles.btnSendDisabled]}
             onPress={handleSubmit}
@@ -226,6 +248,33 @@ const styles = StyleSheet.create({
   chevron: {
     fontSize: 10,
     color: theme.textMuted,
+  },
+  btnTerminal: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: "rgba(0,0,0,0.06)",
+    borderWidth: 1,
+    borderColor: theme.borderColor,
+    alignItems: "center",
+    justifyContent: "center",
+    position: "relative",
+  },
+  btnTerminalActive: {
+    borderColor: theme.success,
+  },
+  btnTerminalText: {
+    fontSize: 18,
+    color: theme.textPrimary,
+  },
+  terminalRunningDot: {
+    position: "absolute",
+    top: 4,
+    right: 4,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: theme.success,
   },
   btnSend: {
     width: 36,

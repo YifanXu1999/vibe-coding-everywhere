@@ -11,6 +11,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WORKSPACE_CWD = __dirname;
 const PORT = process.env.PORT || 3456;
 const SIDEBAR_REFRESH_INTERVAL_MS = parseInt(process.env.SIDEBAR_REFRESH_INTERVAL_MS || "3000", 10) || 3000;
+// Default permission mode when client does not send one (e.g. bypassPermissions = allow all for testing)
+const DEFAULT_PERMISSION_MODE = process.env.DEFAULT_PERMISSION_MODE || "bypassPermissions";
 
 const PAGE_RENDER_SYSTEM_PROMPT = `
 ## Page-render preview rule
@@ -209,7 +211,10 @@ io.on("connection", (socket) => {
     }
     console.log("[submit-prompt] chat input (user prompt):", prompt);
     console.log("[submit-prompt] system prompt (append):", PAGE_RENDER_SYSTEM_PROMPT);
-    const permissionMode = typeof payload?.permissionMode === "string" ? payload.permissionMode.trim() : null;
+    const permissionMode =
+      typeof payload?.permissionMode === "string" && payload.permissionMode.trim()
+        ? payload.permissionMode.trim()
+        : DEFAULT_PERMISSION_MODE || null;
     const allowedTools = Array.isArray(payload?.allowedTools)
       ? payload.allowedTools.filter((t) => typeof t === "string" && t.trim()).map((t) => t.trim())
       : [];
@@ -234,7 +239,61 @@ io.on("connection", (socket) => {
     console.log("[claude-debug]", JSON.stringify(payload, null, 2));
   });
 
-  let runRenderChild = null;
+  const runRenderTerminals = new Map();
+
+  function nextTerminalId() {
+    return `t-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  }
+
+  /** Create a new interactive shell terminal (for "New terminal" button). */
+  socket.on("run-render-new-terminal", () => {
+    const terminalId = nextTerminalId();
+    try {
+      const isWin = process.platform === "win32";
+      const child = isWin
+        ? spawn("cmd", ["/K"], {
+            cwd: WORKSPACE_CWD,
+            stdio: ["pipe", "pipe", "pipe"],
+          })
+        : spawn("bash", ["-i"], {
+            cwd: WORKSPACE_CWD,
+            stdio: ["pipe", "pipe", "pipe"],
+            env: { ...process.env, TERM: "xterm-256color" },
+          });
+      runRenderTerminals.set(terminalId, child);
+      child.stdout?.setEncoding("utf8");
+      child.stderr?.setEncoding("utf8");
+      child.stdout?.on("data", (chunk) => {
+        socket.emit("run-render-stdout", { terminalId, chunk: String(chunk) });
+      });
+      child.stderr?.on("data", (chunk) => {
+        socket.emit("run-render-stderr", { terminalId, chunk: String(chunk) });
+      });
+      child.on("exit", (code, signal) => {
+        runRenderTerminals.delete(terminalId);
+        socket.emit("run-render-exit", { terminalId, code, signal: signal || null });
+      });
+      child.on("error", (err) => {
+        runRenderTerminals.delete(terminalId);
+        socket.emit("run-render-stderr", { terminalId, chunk: `[error] ${err.message}\n` });
+        socket.emit("run-render-exit", { terminalId, code: 1, signal: null });
+      });
+      socket.emit("run-render-started", { terminalId, pid: child.pid ?? null });
+    } catch (err) {
+      socket.emit("run-render-result", { ok: false, error: err.message || "Failed to create terminal." });
+    }
+  });
+
+  /** Write input to an existing terminal (for "Run" in selected terminal). */
+  socket.on("run-render-write", ({ terminalId, data }) => {
+    const id = typeof terminalId === "string" ? terminalId : null;
+    const str = typeof data === "string" ? data : "";
+    if (!id || !str) return;
+    const child = runRenderTerminals.get(id);
+    if (child?.stdin?.writable) {
+      child.stdin.write(str);
+    }
+  });
 
   socket.on("run-render-command", ({ command, url }) => {
     const cmd = typeof command === "string" ? command.trim() : "";
@@ -242,45 +301,49 @@ io.on("connection", (socket) => {
       socket.emit("run-render-result", { ok: false, error: "No command provided." });
       return;
     }
-    if (runRenderChild) {
-      runRenderChild.kill();
-      runRenderChild = null;
-    }
+    const terminalId = nextTerminalId();
     try {
       const child = spawn(cmd, {
         shell: true,
         cwd: WORKSPACE_CWD,
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: ["pipe", "pipe", "pipe"],
       });
-      runRenderChild = child;
+      runRenderTerminals.set(terminalId, child);
+      if (child.stdin) {
+        child.stdin.on("error", () => {});
+      }
       child.stdout?.setEncoding("utf8");
       child.stderr?.setEncoding("utf8");
       child.stdout?.on("data", (chunk) => {
-        socket.emit("run-render-stdout", { chunk: String(chunk) });
+        socket.emit("run-render-stdout", { terminalId, chunk: String(chunk) });
       });
       child.stderr?.on("data", (chunk) => {
-        socket.emit("run-render-stderr", { chunk: String(chunk) });
+        socket.emit("run-render-stderr", { terminalId, chunk: String(chunk) });
       });
       child.on("exit", (code, signal) => {
-        runRenderChild = null;
-        socket.emit("run-render-exit", { code, signal: signal || null });
+        runRenderTerminals.delete(terminalId);
+        socket.emit("run-render-exit", { terminalId, code, signal: signal || null });
       });
       child.on("error", (err) => {
-        runRenderChild = null;
-        socket.emit("run-render-stderr", { chunk: `[error] ${err.message}\n` });
-        socket.emit("run-render-result", { ok: false, error: err.message || "Failed to run command." });
+        runRenderTerminals.delete(terminalId);
+        socket.emit("run-render-stderr", { terminalId, chunk: `[error] ${err.message}\n` });
+        socket.emit("run-render-result", { ok: false, error: err.message || "Failed to run command.", terminalId });
       });
-      // Emit "started" immediately so client can show message and open in-app preview (dev servers may never exit)
-      socket.emit("run-render-result", { ok: true, url: url || "" });
+      socket.emit("run-render-started", { terminalId, pid: child.pid ?? null });
+      socket.emit("run-render-result", { ok: true, url: url || "", terminalId });
     } catch (err) {
       socket.emit("run-render-result", { ok: false, error: err.message || "Failed to run command." });
     }
   });
 
-  socket.on("run-render-terminate", () => {
-    if (runRenderChild) {
-      runRenderChild.kill();
-      runRenderChild = null;
+  socket.on("run-render-terminate", ({ terminalId }) => {
+    const id = typeof terminalId === "string" ? terminalId : null;
+    if (id) {
+      const child = runRenderTerminals.get(id);
+      if (child) {
+        child.kill();
+        runRenderTerminals.delete(id);
+      }
     }
   });
 
@@ -289,6 +352,10 @@ io.on("connection", (socket) => {
       ptyProcess.kill();
       ptyProcess = null;
     }
+    for (const child of runRenderTerminals.values()) {
+      child.kill();
+    }
+    runRenderTerminals.clear();
   });
 });
 

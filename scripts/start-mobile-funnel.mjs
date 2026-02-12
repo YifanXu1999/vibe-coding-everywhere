@@ -49,7 +49,7 @@ async function main() {
 
   const child = spawn(
     "npm",
-    ["run", "-w", "mobile", "start", "--", "--tunnel", "--clear"],
+    ["run", "-w", "mobile", "start", "--", "--lan", "--clear"],
     {
       stdio: "inherit",
       env: {

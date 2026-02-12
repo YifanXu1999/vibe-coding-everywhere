@@ -284,7 +284,7 @@ const styles = StyleSheet.create({
   },
   drawer: {
     backgroundColor: theme.surfaceBg,
-    borderRadius: 20,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: theme.borderColor,
     overflow: "hidden",
@@ -310,6 +310,7 @@ const styles = StyleSheet.create({
   },
   closeBtn: {
     padding: 4,
+    borderRadius: 8,
   },
   closeBtnText: {
     fontSize: 18,
@@ -350,6 +351,8 @@ const styles = StyleSheet.create({
     minHeight: 36,
     paddingVertical: 6,
     paddingRight: 12,
+    borderRadius: 8,
+    marginHorizontal: 8,
   },
   treeRowPressed: {
     backgroundColor: "rgba(0,0,0,0.06)",
