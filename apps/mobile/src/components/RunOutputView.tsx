@@ -25,6 +25,8 @@ interface RunOutputViewProps {
   onFullScreen?: () => void;
   /** When true, allow the output area to grow (e.g. in fullscreen modal). */
   flexOutput?: boolean;
+  /** When false, do not show the last command bar at the bottom (e.g. when user types in an input below). Default true. */
+  showCommand?: boolean;
 }
 
 /** Strip ANSI escape sequences for display. */
@@ -41,6 +43,7 @@ export function RunOutputView({
   showWhenEmpty,
   onFullScreen,
   flexOutput,
+  showCommand = true,
 }: RunOutputViewProps) {
   const scrollRef = useRef<ScrollView>(null);
 
@@ -99,7 +102,7 @@ export function RunOutputView({
           ))}
         </ScrollView>
       )}
-      {command != null && command !== "" && (
+      {showCommand && command != null && command !== "" && (
         <View style={styles.commandBar}>
           <Text style={styles.commandPrefix}>$ </Text>
           <Text style={styles.commandText} selectable numberOfLines={2}>
@@ -132,6 +135,8 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderBottomWidth: 1,
     borderBottomColor: theme.borderColor,
+    borderTopLeftRadius: 10,
+    borderTopRightRadius: 10,
   },
   title: {
     fontSize: 12,
@@ -158,6 +163,8 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: theme.borderColor,
     backgroundColor: theme.beigeBg,
+    borderBottomLeftRadius: 10,
+    borderBottomRightRadius: 10,
   },
   commandPrefix: {
     fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",

@@ -5,14 +5,15 @@ import type { PendingRender } from "../hooks/useSocket";
 
 interface RenderPreviewBarProps {
   pendingRender: PendingRender | null;
-  onRunRender: (command: string, url: string) => void;
+  /** True only after command has been run and server acknowledged. Preview is allowed only when true. */
+  hasRunCommandForCurrentRender: boolean;
   /** Open preview URL in-app (WebView modal) — integrated with chat. */
   onOpenPreviewInApp: (url: string) => void;
 }
 
 export function RenderPreviewBar({
   pendingRender,
-  onRunRender,
+  hasRunCommandForCurrentRender,
   onOpenPreviewInApp,
 }: RenderPreviewBarProps) {
   const [editedCommand, setEditedCommand] = useState("");
@@ -27,14 +28,17 @@ export function RenderPreviewBar({
 
   if (!pendingRender) return null;
 
-  const handleRunOnly = () => {
-    onRunRender(editedCommand.trim(), editedUrl.trim());
-  };
-
   const handlePreviewOnly = () => {
     const url = editedUrl.trim();
-    if (url) onOpenPreviewInApp(url);
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/4e3ee01c-fe3e-4a44-9e7a-dacd3fdcc465',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'RenderPreviewBar.tsx:handlePreviewOnly',message:'Preview clicked',data:{url:!!url,hasRunCommandForCurrentRender,hypothesisId:'H1'},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+    if (!url) return;
+    if (!hasRunCommandForCurrentRender) return; // User must run command first
+    onOpenPreviewInApp(url);
   };
+
+  const canPreview = hasRunCommandForCurrentRender && editedUrl.trim().length > 0;
 
   return (
     <View style={styles.container}>
@@ -61,11 +65,13 @@ export function RenderPreviewBar({
         />
       </View>
       <View style={styles.buttons}>
-        <TouchableOpacity style={styles.btnSecondary} onPress={handleRunOnly} activeOpacity={0.8}>
-          <Text style={styles.btnSecondaryText}>Run command</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.btn} onPress={handlePreviewOnly} activeOpacity={0.8}>
-          <Text style={styles.btnText}>Preview</Text>
+        <TouchableOpacity
+          style={[styles.btn, !canPreview && styles.btnDisabled]}
+          onPress={handlePreviewOnly}
+          activeOpacity={0.8}
+          disabled={!canPreview}
+        >
+          <Text style={[styles.btnText, !canPreview && styles.btnTextDisabled]}>Preview</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -132,17 +138,12 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     fontSize: 14,
   },
-  btnSecondary: {
-    paddingVertical: 8,
-    paddingHorizontal: 18,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: theme.accent,
-    backgroundColor: "transparent",
+  btnDisabled: {
+    opacity: 0.5,
+    backgroundColor: theme.borderColor,
+    borderColor: theme.borderColor,
   },
-  btnSecondaryText: {
-    color: theme.accent,
-    fontWeight: "500",
-    fontSize: 14,
+  btnTextDisabled: {
+    color: theme.textMuted,
   },
 });

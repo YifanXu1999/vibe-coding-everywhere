@@ -30,6 +30,7 @@ export function PreviewWebViewModal({
   if (!visible || !url?.trim()) return null;
 
   const resolvedUrl = url.trim();
+  console.log("[PreviewURL] PreviewWebViewModal: loading uri=" + resolvedUrl);
 
   return (
     <Modal
@@ -60,14 +61,20 @@ export function PreviewWebViewModal({
                 setLoading(true);
                 setError(null);
               }}
-              onLoadEnd={() => setLoading(false)}
+              onLoadEnd={() => {
+                setLoading(false);
+                console.log("[PreviewURL] WebView onLoadEnd: loaded successfully uri=" + resolvedUrl);
+              }}
               onError={(e) => {
                 setLoading(false);
-                setError(e.nativeEvent?.description ?? "加载失败");
+                const desc = e.nativeEvent?.description ?? "加载失败";
+                console.log("[PreviewURL] WebView onError: uri=" + resolvedUrl + " | description=" + desc);
+                setError(desc);
               }}
               onHttpError={(e) => {
                 setLoading(false);
                 const status = e.nativeEvent?.statusCode;
+                console.log("[PreviewURL] WebView onHttpError: uri=" + resolvedUrl + " | statusCode=" + (e.nativeEvent?.statusCode ?? ""));
                 setError(status ? `HTTP ${status}` : "加载失败");
               }}
               javaScriptEnabled
@@ -117,7 +124,7 @@ const styles = StyleSheet.create({
   },
   webview: {
     flex: 1,
-    backgroundColor: "#fff",
+    backgroundColor: theme.surfaceBg,
   },
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,

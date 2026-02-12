@@ -2,10 +2,24 @@ import express from "express";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import pty from "node-pty";
-import { spawn } from "child_process";
+import { spawn, execSync } from "child_process";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
+
+/** Kill any process listening on the given port (e.g. leftover from Claude verification). No-op if port invalid or none bound. */
+function killProcessOnPort(port) {
+  const p = parseInt(port, 10);
+  if (!Number.isInteger(p) || p <= 0 || p > 65535) return;
+  try {
+    const pidList = execSync(`lsof -ti :${p}`, { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }).trim();
+    if (pidList) {
+      execSync(`kill -9 ${pidList.split(/\s+/).join(" ")}`, { stdio: "ignore" });
+    }
+  } catch (_) {
+    // No process on port or lsof/kill not available
+  }
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3456;
@@ -119,6 +133,7 @@ When the task produces browser-viewable content (HTML, static site, dev server):
 - Use a random port if the user does not specify one.
 - Test the command(s) in a fresh terminal at workspace root (up to 3 attempts). Record logs.
 - **Decide from the test result only:** Verified = command(s) ran with no errors. Not verified = "permission denied", "access denied", "EACCES", or any failure in the logs.
+- **After verifying:** If the command starts a long-running server (e.g. http.server, dev server), terminate that test process (e.g. Ctrl+C) so the port is free. The user will run the same command again in the app; if the test process is left running, the app will get "Address already in use".
 - **Output exactly one format.** When not verified, you must NOT output "Run the following command for render" or "URL for preview" — those lines are only for the verified case.
 
 **If verified** (output only these two lines, no other text):
@@ -215,6 +230,54 @@ app.get("/api/workspace-tree", (_, res) => {
 
 const IMAGE_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg"]);
 const MAX_TEXT_FILE_BYTES = 512 * 1024; // 500 KB - prevents huge files like package-lock.json from freezing the viewer
+
+/** Serve raw workspace file for preview (HTML, etc.) so Preview works without running http.server. */
+app.get("/api/preview-raw", (req, res) => {
+  const relPath = req.query.path;
+  if (typeof relPath !== "string" || !relPath.trim()) {
+    return res.status(400).send("Missing or invalid path");
+  }
+  try {
+    const normalized = path.normalize(relPath).replace(/^(\.\.(\/|\\|$))+/, "").replace(/^\//, "");
+    const fullPath = path.join(WORKSPACE_CWD, normalized);
+    if (!fullPath.startsWith(WORKSPACE_CWD)) {
+      return res.status(403).send("Path outside workspace");
+    }
+    const stat = fs.statSync(fullPath);
+    if (!stat.isFile()) return res.status(400).send("Not a file");
+    const ext = path.extname(normalized).toLowerCase().replace(/^\./, "");
+    const mime = ext === "html" || ext === "htm" ? "text/html" : ext === "css" ? "text/css" : ext === "js" ? "application/javascript" : "application/octet-stream";
+    res.setHeader("Content-Type", mime);
+    res.sendFile(fullPath);
+  } catch (err) {
+    if (err.code === "ENOENT") return res.status(404).send("File not found");
+    res.status(500).send(err.message || "Failed to serve file");
+  }
+});
+
+/** Serve workspace files at root path (e.g. /abc.html) so URLs like http://host:PORT/abc.html work for preview. */
+function serveWorkspaceFile(req, res, next) {
+  const rawPath = (req.path || "/").replace(/^\//, "") || "index.html";
+  const normalized = path.normalize(rawPath).replace(/^(\.\.(\/|\\|$))+/, "").replace(/^\//, "");
+  const fullPath = path.join(WORKSPACE_CWD, normalized);
+  if (!fullPath.startsWith(WORKSPACE_CWD)) return next();
+  try {
+    const stat = fs.statSync(fullPath);
+    if (!stat.isFile()) return next();
+    const ext = path.extname(normalized).toLowerCase().replace(/^\./, "");
+    const mime = ext === "html" || ext === "htm" ? "text/html" : ext === "css" ? "text/css" : ext === "js" ? "application/javascript" : "application/octet-stream";
+    res.setHeader("Content-Type", mime);
+    res.sendFile(fullPath);
+  } catch (err) {
+    if (err.code === "ENOENT") return next();
+    res.status(500).send(err.message || "Failed to serve file");
+  }
+}
+// Catch-all for non-API paths so /abc.html and /subdir/index.html work (must be after all /api/* routes)
+app.get("*", (req, res, next) => {
+  if (req.path.startsWith("/api/")) return next();
+  serveWorkspaceFile(req, res, next);
+});
 
 app.get("/api/workspace-file", (req, res) => {
   const relPath = req.query.path;
@@ -600,6 +663,15 @@ io.on("connection", (socket) => {
       socket.emit("run-render-result", { ok: false, error: "No command provided." });
       return;
     }
+    const urlStr = typeof url === "string" ? url.trim() : "";
+    let port = null;
+    if (urlStr) {
+      try {
+        const u = new URL(urlStr);
+        if (u.port) port = u.port;
+      } catch (_) {}
+    }
+    if (port) killProcessOnPort(port);
     const terminalId = nextTerminalId();
     try {
       const child = spawn(cmd, {

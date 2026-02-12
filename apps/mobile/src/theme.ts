@@ -1,12 +1,12 @@
 export const theme = {
   beigeBg: "#fdf7ee",
   cardBg: "#fffdf9",
-  /** Background for chat input footer and aligned surfaces (header, page) */
-  surfaceBg: "#ffffff",
+  /** Background for chat input footer and aligned surfaces (header, page). Avoid pure white. */
+  surfaceBg: "#fcf7ef",
   borderColor: "#ece2d3",
   textPrimary: "#2f1f0f",
   textMuted: "#7a6656",
-  assistantBg: "#ffffff",
+  assistantBg: "#fcf7ef",
   userBg: "#f8efe3",
   accent: "#b3541e",
   accentLight: "#f0d4bf",

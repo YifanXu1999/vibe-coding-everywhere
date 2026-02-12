@@ -163,6 +163,8 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: theme.borderColor,
     backgroundColor: theme.surfaceBg,
+    borderBottomLeftRadius: 12,
+    borderBottomRightRadius: 12,
   },
   title: {
     fontSize: 18,

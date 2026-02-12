@@ -66,7 +66,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     borderWidth: 1,
     borderColor: theme.danger,
-    backgroundColor: "#fff",
+    backgroundColor: theme.surfaceBg,
   },
   btnRejectText: {
     fontWeight: "500",

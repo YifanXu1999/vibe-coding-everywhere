@@ -163,11 +163,13 @@ export function WorkspaceSidebar({ visible, embedded, onClose, onFileSelect }: W
               onPress={() => toggleFolder(item.path)}
             >
               <Text style={styles.treeIcon}>{isExpanded ? "▼" : "▶"}</Text>
-              <Image
-                source={ICONS.folder}
-                style={[styles.treeIconImage, { tintColor: ATOM_ONE_LIGHT.folder }]}
-                contentFit="contain"
-              />
+              <View style={styles.treeIconWrap}>
+                <Image
+                  source={ICONS.folder}
+                  style={[styles.treeIconImage, { tintColor: ATOM_ONE_LIGHT.folder }]}
+                  contentFit="contain"
+                />
+              </View>
               <Text style={styles.treeLabel} numberOfLines={1}>
                 {item.name}
               </Text>
@@ -192,11 +194,13 @@ export function WorkspaceSidebar({ visible, embedded, onClose, onFileSelect }: W
           onPress={() => handleFilePress(item.path)}
         >
           <View style={styles.treeIconChevron} />
-          <Image
-            source={ICONS.file}
-            style={[styles.treeIconImage, { tintColor: fileColor }]}
-            contentFit="contain"
-          />
+          <View style={styles.treeIconWrap}>
+            <Image
+              source={ICONS.file}
+              style={[styles.treeIconImage, { tintColor: fileColor }]}
+              contentFit="contain"
+            />
+          </View>
           <Text style={styles.treeLabel} numberOfLines={1}>
             {item.name}
           </Text>
@@ -283,8 +287,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   drawer: {
-    backgroundColor: theme.surfaceBg,
-    borderRadius: 16,
+    backgroundColor: theme.beigeBg,
+    borderRadius: 24,
     borderWidth: 1,
     borderColor: theme.borderColor,
     overflow: "hidden",
@@ -302,6 +306,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.borderColor,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    backgroundColor: theme.beigeBg,
   },
   headerTitle: {
     fontSize: 16,
@@ -309,8 +316,12 @@ const styles = StyleSheet.create({
     color: theme.textPrimary,
   },
   closeBtn: {
-    padding: 4,
-    borderRadius: 8,
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: "rgba(0,0,0,0.06)",
+    alignItems: "center",
+    justifyContent: "center",
   },
   closeBtnText: {
     fontSize: 18,
@@ -321,6 +332,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.borderColor,
+    backgroundColor: theme.beigeBg,
   },
   workspaceNameText: {
     fontSize: 12,
@@ -334,9 +346,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     paddingVertical: 24,
+    backgroundColor: theme.beigeBg,
   },
   scroll: {
     flex: 1,
+    backgroundColor: theme.beigeBg,
   },
   scrollContent: {
     paddingVertical: 8,
@@ -351,7 +365,7 @@ const styles = StyleSheet.create({
     minHeight: 36,
     paddingVertical: 6,
     paddingRight: 12,
-    borderRadius: 8,
+    borderRadius: 10,
     marginHorizontal: 8,
   },
   treeRowPressed: {
@@ -367,10 +381,18 @@ const styles = StyleSheet.create({
     width: 14,
     marginRight: 4,
   },
+  treeIconWrap: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    overflow: "hidden",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 6,
+  },
   treeIconImage: {
     width: 20,
     height: 20,
-    marginRight: 6,
   },
   treeLabel: {
     flex: 1,

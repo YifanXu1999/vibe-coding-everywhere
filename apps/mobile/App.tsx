@@ -46,6 +46,10 @@ export default function App() {
   const defaultPermissionMode =
     (typeof process !== "undefined" && process.env?.EXPO_PUBLIC_DEFAULT_PERMISSION_MODE) || "bypassPermissions";
   const [permissionMode, setPermissionMode] = useState<string | null>(defaultPermissionMode);
+  const initialPreviewUrl =
+    typeof process !== "undefined" && process.env?.EXPO_PUBLIC_INITIAL_PREVIEW_URL
+      ? process.env.EXPO_PUBLIC_INITIAL_PREVIEW_URL.trim()
+      : null;
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [sidebarVisible, setSidebarVisible] = useState(false);
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
@@ -72,6 +76,8 @@ export default function App() {
     pendingRender,
     permissionDenials,
     runRenderResult,
+    hasRunCommandForCurrentRender,
+    renderTerminalId,
     terminals,
     selectedTerminalId,
     setSelectedTerminalId,
@@ -84,7 +90,6 @@ export default function App() {
     dismissAskQuestion,
     retryAfterPermission,
     dismissPermission,
-    runRenderCommand,
     runNewTerminal,
     runUserCommand,
     terminateRunProcess,
@@ -121,6 +126,16 @@ export default function App() {
       }
     });
   }, [selectedTerminalId, terminals.length, selectedTerminalIndex]);
+
+  // Initial preview URL auto-open disabled so user must run command first, then use Preview.
+  // Previously: __DEV__ + EXPO_PUBLIC_INITIAL_PREVIEW_URL could open preview on load without Run.
+  const didOpenInitialPreview = useRef(false);
+  useEffect(() => {
+    if (__DEV__ && initialPreviewUrl && !didOpenInitialPreview.current) {
+      didOpenInitialPreview.current = true;
+      // setPreviewUrl(serverConfig.resolvePreviewUrl(initialPreviewUrl)); // disabled: enforce run-first
+    }
+  }, [initialPreviewUrl, serverConfig]);
 
   useEffect(() => {
     if (!selectedFilePath) return;
@@ -177,6 +192,9 @@ export default function App() {
   );
 
   const handleOpenPreviewInApp = useCallback((u: string) => {
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/4e3ee01c-fe3e-4a44-9e7a-dacd3fdcc465',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:handleOpenPreviewInApp',message:'Opening preview',data:{url:u?.slice(0,60),hypothesisId:'H4'},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     if (u) setPreviewUrl(serverConfig.resolvePreviewUrl(u));
   }, []);
 
@@ -277,9 +295,33 @@ export default function App() {
                   )}
                   <RenderPreviewBar
                     pendingRender={pendingRender}
-                    onRunRender={runRenderCommand}
+                    hasRunCommandForCurrentRender={hasRunCommandForCurrentRender}
                     onOpenPreviewInApp={handleOpenPreviewInApp}
                   />
+                  {pendingRender != null && (
+                    <View style={styles.renderTerminalWrap}>
+                      <RunOutputView
+                        lines={
+                          renderTerminalId
+                            ? (terminals.find((t) => t.id === renderTerminalId)?.lines ?? [])
+                            : []
+                        }
+                        title="Terminal"
+                        command={
+                          renderTerminalId
+                            ? terminals.find((t) => t.id === renderTerminalId)?.lastCommand ?? null
+                            : null
+                        }
+                        showWhenEmpty
+                        onTerminate={
+                          renderTerminalId
+                            ? () => terminateRunProcess(renderTerminalId)
+                            : undefined
+                        }
+                        maxHeight={220}
+                      />
+                    </View>
+                  )}
                   {permissionDenials && permissionDenials.length > 0 && (
                     <PermissionDenialBanner
                       denials={permissionDenials}
@@ -661,6 +703,10 @@ const styles = StyleSheet.create({
   },
   runResultError: {
     color: theme.danger,
+  },
+  renderTerminalWrap: {
+    marginTop: 10,
+    width: "100%",
   },
   fullScreenTerminalSafe: {
     flex: 1,

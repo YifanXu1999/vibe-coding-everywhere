@@ -48,6 +48,7 @@ export function useSocket(options: UseSocketOptions = {}) {
   const [claudeRunning, setClaudeRunning] = useState(false);
   const [waitingForUserInput, setWaitingForUserInput] = useState(false);
   const [typingIndicator, setTypingIndicator] = useState(false);
+  /** When set, the command/URL box is shown. Do NOT auto-run the command — execution only on explicit user "Run command" click. */
   const [pendingRender, setPendingRender] = useState<PendingRender | null>(null);
   const [lastRunOptions, setLastRunOptions] = useState<LastRunOptions>({
     permissionMode: null,
@@ -58,6 +59,10 @@ export function useSocket(options: UseSocketOptions = {}) {
   const [pendingAskQuestion, setPendingAskQuestion] = useState<PendingAskUserQuestion | null>(null);
   const [modelName, setModelName] = useState("Sonnet 4.5");
   const [runRenderResult, setRunRenderResult] = useState<{ ok: boolean; message: string } | null>(null);
+  /** True after command was run and server acknowledged (ok). Reset when pendingRender changes. */
+  const [hasRunCommandForCurrentRender, setHasRunCommandForCurrentRender] = useState(false);
+  /** Terminal id created for the current pending render (command auto-run). Shown below the bar and managed by session. */
+  const [renderTerminalId, setRenderTerminalId] = useState<string | null>(null);
   const [terminals, setTerminals] = useState<TerminalState[]>([]);
   const [selectedTerminalId, setSelectedTerminalId] = useState<string | null>(null);
   const [mockSequences, setMockSequences] = useState<string[]>([]);
@@ -71,6 +76,12 @@ export function useSocket(options: UseSocketOptions = {}) {
   const nextIdRef = useRef(0);
   const workspaceRootRef = useRef<string | null>(null);
   const pendingRunCommandRef = useRef<string | null>(null);
+  /** When set, the next run-render-started (from runNewTerminal) should receive this command via run-render-write so we reuse one shell instead of creating a new process per command. */
+  const pendingCommandAfterNewTerminalRef = useRef<string | null>(null);
+  /** Key of the current pending render (command|url). Used to only reset hasRunCommandForCurrentRender when the suggestion actually changes, not when the same content is set with a new object reference (e.g. after streaming). */
+  const pendingRenderKeyRef = useRef<string>("");
+  /** Mirror of renderTerminalId for use in effect: terminate this terminal when pendingRender key changes so the port is freed before running the new command. */
+  const renderTerminalIdRef = useRef<string | null>(null);
 
   const addMessage = useCallback(
     (role: Message["role"], content: string, codeReferences?: CodeReference[]) => {
@@ -236,18 +247,33 @@ export function useSocket(options: UseSocketOptions = {}) {
         const cmd = pendingRunCommandRef.current ?? "";
         pendingRunCommandRef.current = null;
         const isSingleCommand = cmd !== "";
+        const pendingUserCmd = pendingCommandAfterNewTerminalRef.current;
+        pendingCommandAfterNewTerminalRef.current = null;
         setTerminals((prev) => [
           ...prev,
           {
             id: terminalId,
             pid: pid ?? null,
-            lines: cmd ? [{ type: "stdout" as const, text: `$ ${cmd}\n` }] : [],
-            lastCommand: cmd || null,
+            lines:
+              cmd || pendingUserCmd
+                ? [{ type: "stdout" as const, text: `$ ${(cmd || pendingUserCmd)!}\n` }]
+                : [],
+            lastCommand: cmd || pendingUserCmd || null,
             active: true,
             isSingleCommand,
           },
         ]);
         setSelectedTerminalId(terminalId);
+        if (isSingleCommand) {
+          renderTerminalIdRef.current = terminalId;
+          setRenderTerminalId(terminalId);
+        }
+        if (pendingUserCmd) {
+          socketRef.current?.emit("run-render-write", {
+            terminalId,
+            data: pendingUserCmd + "\n",
+          });
+        }
       }
     );
     socket.on("run-render-stdout", ({ terminalId, chunk }: { terminalId: string; chunk: string }) => {
@@ -264,8 +290,8 @@ export function useSocket(options: UseSocketOptions = {}) {
         )
       );
     });
-    socket.on("run-render-exit", ({ terminalId }: { terminalId: string }) => {
-      setTerminals((prev) => prev.map((t) => (t.id === terminalId ? { ...t, active: false } : t)));
+    socket.on("run-render-exit", (_: { terminalId: string }) => {
+      // Keep terminal as running (no idle); user can always type and run new commands.
     });
     socket.on(
       "run-render-result",
@@ -276,12 +302,11 @@ export function useSocket(options: UseSocketOptions = {}) {
       }: { ok?: boolean; error?: string; terminalId?: string }) => {
         if (ok) {
           setRunRenderResult({ ok: true, message: "Command started. Open preview in app." });
+          setHasRunCommandForCurrentRender(true);
         } else {
           if (error) setRunRenderResult({ ok: false, message: `Failed to run command: ${error}` });
           setPendingRender(null);
-          if (terminalId) {
-            setTerminals((prev) => prev.map((t) => (t.id === terminalId ? { ...t, active: false } : t)));
-          }
+          // Keep terminal as running (no idle).
         }
         setTimeout(() => setRunRenderResult(null), 4000);
       }
@@ -292,6 +317,30 @@ export function useSocket(options: UseSocketOptions = {}) {
       socketRef.current = null;
     };
   }, [serverUrl, handleRawLine, appendAssistantText, finalizeAssistantMessage, addMessage]);
+
+  const runRenderCommand = useCallback((command: string, url: string) => {
+    pendingRunCommandRef.current = command.trim();
+    socketRef.current?.emit("run-render-command", { command: command.trim(), url });
+  }, []);
+
+  useEffect(() => {
+    const key = pendingRender ? `${pendingRender.command ?? ""}|${pendingRender.url ?? ""}` : "";
+    const prevKey = pendingRenderKeyRef.current;
+    const keyChanged = key !== prevKey;
+    if (keyChanged) {
+      const oldRenderTerminalId = renderTerminalIdRef.current;
+      if (oldRenderTerminalId) {
+        socketRef.current?.emit("run-render-terminate", { terminalId: oldRenderTerminalId });
+        renderTerminalIdRef.current = null;
+      }
+      pendingRenderKeyRef.current = key;
+      setHasRunCommandForCurrentRender(false);
+      setRenderTerminalId(null);
+      if (key && pendingRender?.command?.trim()) {
+        runRenderCommand(pendingRender.command.trim(), pendingRender.url?.trim() ?? "");
+      }
+    }
+  }, [pendingRender, runRenderCommand]);
 
   useEffect(() => {
     if (!connected) return;
@@ -416,12 +465,16 @@ export function useSocket(options: UseSocketOptions = {}) {
     [pendingAskQuestion, addMessage, lastRunOptions]
   );
 
-  const runRenderCommand = useCallback((command: string, url: string) => {
-    pendingRunCommandRef.current = command.trim();
-    socketRef.current?.emit("run-render-command", { command: command.trim(), url });
+  const runNewTerminal = useCallback(() => {
+    pendingCommandAfterNewTerminalRef.current = null;
+    socketRef.current?.emit("run-render-new-terminal");
   }, []);
 
-  const runNewTerminal = useCallback(() => {
+  /** Create one interactive shell and run the command in it (so subsequent commands reuse the same terminal). Use when canRunInSelectedTerminal is false to avoid creating a new process per command. */
+  const runCommandInNewTerminal = useCallback((command: string) => {
+    const cmd = command.trim();
+    if (!cmd) return;
+    pendingCommandAfterNewTerminalRef.current = cmd;
     socketRef.current?.emit("run-render-new-terminal");
   }, []);
 
@@ -452,9 +505,21 @@ export function useSocket(options: UseSocketOptions = {}) {
 
   const terminateRunProcess = useCallback((terminalId: string) => {
     socketRef.current?.emit("run-render-terminate", { terminalId });
-    setTerminals((prev) => prev.filter((t) => t.id !== terminalId));
-    setSelectedTerminalId((current) => (current === terminalId ? null : current));
-  }, []);
+    if (terminalId === renderTerminalIdRef.current) renderTerminalIdRef.current = null;
+    setRenderTerminalId((current) => (current === terminalId ? null : current));
+    setTerminals((prev) => {
+      const next = prev.filter((t) => t.id !== terminalId);
+      const killedIndex = prev.findIndex((t) => t.id === terminalId);
+      const isSelected = selectedTerminalId === terminalId;
+      if (isSelected && next.length > 0) {
+        const newIndex = Math.min(Math.max(0, killedIndex - 1), next.length - 1);
+        setSelectedTerminalId(next[newIndex].id);
+      } else if (isSelected) {
+        setSelectedTerminalId(null);
+      }
+      return next;
+    });
+  }, [selectedTerminalId]);
 
   const terminateAgent = useCallback(() => {
     socketRef.current?.emit("claude-terminate");
@@ -490,6 +555,8 @@ export function useSocket(options: UseSocketOptions = {}) {
     permissionDenials,
     modelName,
     runRenderResult,
+    hasRunCommandForCurrentRender,
+    renderTerminalId,
     terminals,
     selectedTerminalId,
     setSelectedTerminalId,
@@ -503,6 +570,7 @@ export function useSocket(options: UseSocketOptions = {}) {
     dismissPermission,
     runRenderCommand,
     runNewTerminal,
+    runCommandInNewTerminal,
     runUserCommand,
     terminateRunProcess,
     terminateAgent,
