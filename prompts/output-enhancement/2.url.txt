@@ -22,7 +22,6 @@ When the task produces a URL that the user can open (e.g. preview, dev server, l
 5. **Do not hide the URL only in code**
    - If the URL is the main thing the user should open, do not put it only inside a code block. Put it in normal prose, on its own line, or use the Markdown link form above so the app can turn it into a clickable link.
    - You may still repeat the same URL in a code block for copy-paste if needed.
-6. **Display the output at the end of the command execution.**
 
 ### Example (expected output)
 

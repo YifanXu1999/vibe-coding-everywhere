@@ -1,5 +1,5 @@
-import React, { useMemo } from "react";
-import { View, Text, StyleSheet, Linking, Pressable, Alert } from "react-native";
+import React, { useMemo, useRef, useEffect } from "react";
+import { View, Text, StyleSheet, Linking, Pressable, Alert, ScrollView } from "react-native";
 import Markdown from "react-native-markdown-display";
 import { theme } from "../theme";
 import type { Message } from "../hooks/useSocket";
@@ -40,20 +40,40 @@ function wrapBareUrlsInMarkdown(content: string): string {
   );
 }
 
+/** Matches file-activity lines from formatToolUseForDisplay (Writing, Reading, Editing). */
+export function hasFileActivityContent(content: string | null | undefined): boolean {
+  if (!content || typeof content !== "string") return false;
+  return (
+    /📝\s*Writing|✏️\s*Editing|📖\s*Reading/.test(content) ||
+    /Writing\s*`|Editing\s*`|Reading\s*`/.test(content)
+  );
+}
+
 interface MessageBubbleProps {
   message: Message;
   /** When true, the bubble content is the "Terminated" label (muted style). */
   isTerminatedLabel?: boolean;
+  /** When true and assistant content, show content in a small scrollable tail box (max height from tailBoxMaxHeight). */
+  showAsTailBox?: boolean;
+  /** Max height for the tail box (e.g. half screen). Only used when showAsTailBox is true. */
+  tailBoxMaxHeight?: number;
   /** When provided, bash code blocks are tappable; user can choose to run the command in a new terminal. */
   onRunBashCommand?: (command: string) => void;
   /** When provided, links (including bare URLs) open in the app's internal browser instead of external. */
   onOpenUrl?: (url: string) => void;
 }
 
-export function MessageBubble({ message, isTerminatedLabel, onRunBashCommand, onOpenUrl }: MessageBubbleProps) {
+export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailBoxMaxHeight = 360, onRunBashCommand, onOpenUrl }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
   const refs = message.codeReferences ?? [];
+  const tailScrollRef = useRef<ScrollView>(null);
+
+  useEffect(() => {
+    if (showAsTailBox && message.content) {
+      tailScrollRef.current?.scrollToEnd({ animated: true });
+    }
+  }, [showAsTailBox, message.content]);
 
   const markdownRules = useMemo(() => {
     if (!onRunBashCommand) return undefined;
@@ -133,6 +153,31 @@ export function MessageBubble({ message, isTerminatedLabel, onRunBashCommand, on
             >
               {message.content}
             </Text>
+          ) : showAsTailBox ? (
+            <ScrollView
+              ref={tailScrollRef}
+              style={[styles.tailBoxScroll, { maxHeight: tailBoxMaxHeight }]}
+              contentContainerStyle={styles.tailBoxContent}
+              showsVerticalScrollIndicator={false}
+              showsHorizontalScrollIndicator={false}
+              nestedScrollEnabled
+            >
+              <Markdown
+                style={markdownStyles}
+                mergeStyle
+                rules={markdownRules}
+                onLinkPress={(url) => {
+                  if (onOpenUrl) {
+                    onOpenUrl(url);
+                    return false;
+                  }
+                  Linking.openURL(url);
+                  return false;
+                }}
+              >
+                {wrapBareUrlsInMarkdown(message.content)}
+              </Markdown>
+            </ScrollView>
           ) : (
             <Markdown
               style={markdownStyles}
@@ -232,6 +277,12 @@ const styles = StyleSheet.create({
   bubbleTextPlaceholder: {
     color: theme.textMuted,
     fontStyle: "italic",
+  },
+  tailBoxScroll: {
+    flexGrow: 0,
+  },
+  tailBoxContent: {
+    paddingBottom: 12,
   },
   refPills: {
     flexDirection: "row",

@@ -40,7 +40,7 @@ function getWorkspaceCwd() {
       break;
     }
   }
-  const raw = fromCli ?? process.env.WORKSPACE ?? process.env.WORKSPACE_CWD ?? path.join(__dirname, "..", "workspace");
+  const raw = fromCli ?? process.env.WORKSPACE ?? process.env.WORKSPACE_CWD ?? path.join(__dirname, "workspace_for_testing");
   const resolved = path.resolve(raw);
   if (!fs.existsSync(resolved)) {
     console.warn(`[workspace] Path does not exist: ${resolved}. Using server directory.`);

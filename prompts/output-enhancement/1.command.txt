@@ -18,7 +18,7 @@ After all command execution is done, output a **full chain of commands** that wo
 
 Use this structure every time the task involves commands:
 
-#### Command execution summary
+#### **Command execution summary**
 
 [Brief description of what was run and why.]
 

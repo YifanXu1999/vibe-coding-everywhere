@@ -17,7 +17,7 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useSocket } from "./src/hooks/useSocket";
-import { MessageBubble } from "./src/components/MessageBubble";
+import { MessageBubble, hasFileActivityContent } from "./src/components/MessageBubble";
 import { TypingIndicator } from "./src/components/TypingIndicator";
 import { RenderPreviewBar } from "./src/components/RenderPreviewBar";
 import { PermissionDenialBanner } from "./src/components/PermissionDenialBanner";
@@ -273,10 +273,16 @@ export default function App() {
                 const messageToShow = showTerminated
                   ? { ...item, content: "Terminated" }
                   : item;
+                const showTailBox =
+                  isLast &&
+                  item.role === "assistant" &&
+                  hasFileActivityContent(item.content);
                 return (
                   <MessageBubble
                     message={messageToShow}
                     isTerminatedLabel={showTerminated}
+                    showAsTailBox={showTailBox}
+                    tailBoxMaxHeight={Dimensions.get("window").height * 0.5}
                     onRunBashCommand={runCommandInNewTerminal}
                     onOpenUrl={handleOpenPreviewInApp}
                   />

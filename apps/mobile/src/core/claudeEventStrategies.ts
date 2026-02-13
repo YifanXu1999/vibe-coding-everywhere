@@ -21,8 +21,11 @@ function formatToolUseForDisplay(name: string, input: unknown): string {
       return file ? `✏️ Editing \`${file}\`` : "✏️ Editing file";
     case "Write":
       return file ? `📝 Writing \`${file}\`` : "📝 Writing file";
-    case "Bash":
-      return "🖥 Running command";
+    case "Bash": {
+      const cmd = obj.command != null ? String(obj.command).trim() : "";
+      const displayCmd = cmd.length > 120 ? cmd.slice(0, 117) + "..." : cmd;
+      return displayCmd ? `🖥 Running command: \`${displayCmd}\`` : "🖥 Running command";
+    }
     case "TodoWrite":
       return "📋 Updating tasks";
     case "AskUserQuestion": {
@@ -80,11 +83,11 @@ function createHandlerRegistry(ctx: ClaudeEventContext): Map<string, ClaudeEvent
 
   registry.set("assistant", (data) => {
     const contents = (data.message as { content?: Array<{ type?: string; text?: string; name?: string; input?: unknown }> })?.content ?? [];
-    // Append human-readable lines for tool_use so the UI shows what Claude is doing.
+    // Append human-readable lines for tool_use so the UI shows what Claude is doing. Start on a new line.
     for (const c of contents) {
       if (c.type === "tool_use" && c.name) {
         const line = formatToolUseForDisplay(c.name, c.input);
-        ctx.appendAssistantText(line + "\n\n");
+        ctx.appendAssistantText("\n\n" + line + "\n\n");
       }
     }
     const full = contents

@@ -1,6 +1,6 @@
 /**
  * Formats the access-restriction system prompt for chat from
- * prompts/access-restriction/chat-access-restriction-prompt.md.
+ * prompts/access-restriction/1.chat-access-restriction-prompt.md.
  * Use as (or as part of) the system prompt so the model only operates inside the workspace.
  */
 
@@ -13,7 +13,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PLACEHOLDER_WORKSPACE = "{{WORKSPACE_PATH}}";
 const PLACEHOLDER_PARENT = "{{PARENT_PATH}}";
 
-const DEFAULT_PROMPT_PATH = path.join(__dirname, "chat-access-restriction-prompt.md");
+const DEFAULT_PROMPT_PATH = path.join(__dirname, "1.chat-access-restriction-prompt.md");
 
 /**
  * Normalize workspace path (ensure one trailing slash for display).
@@ -73,7 +73,7 @@ function replacePaths(content, _workspacePath, paths) {
  * Get the formatted access-restriction system prompt.
  *
  * @param {string} workspacePath - Absolute path to the workspace directory (e.g. WORKSPACE_CWD).
- * @param {{ promptFilePath?: string, promptContent?: string }} [options] - promptFilePath to load from file, or promptContent string. Defaults to chat-access-restriction-prompt.md next to this module.
+ * @param {{ promptFilePath?: string, promptContent?: string }} [options] - promptFilePath to load from file, or promptContent string. Defaults to 1.chat-access-restriction-prompt.md next to this module.
  * @returns {string} Formatted prompt (instructions only, with paths substituted).
  */
 export function getFormattedAccessRestrictionPrompt(workspacePath, options = {}) {
