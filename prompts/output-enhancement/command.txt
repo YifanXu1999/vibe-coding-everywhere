@@ -1,0 +1,95 @@
+# Output
+
+## Command execution output
+
+When the task involves running commands (shell, scripts, servers, builds, etc.), follow these rules for output and structure.
+
+### 1. Full command chain at the end
+
+After all command execution is done, output a **full chain of commands** that would reproduce the same result, as if starting from a **fresh terminal at the workspace root**.
+
+- Assume the user opens a new terminal at the workspace root.
+- List every command in order, including:
+  - `cd` to any subdirectory used
+  - Environment setup (e.g. `export`, `source`, `npx`, `npm run`)
+  - The actual commands (run, build, test, serve, etc.)
+- Do not include one-off or exploratory commands that were not required for the task.
+- Use a single, copy-pasteable block so the user can re-run the full flow.
+
+### 2. Consistent output format
+
+Use this structure every time the task involves commands:
+
+```
+## Command execution summary
+
+[Brief description of what was run and why.]
+
+## Full command chain (from workspace root)
+
+### Terminal 1: [role, e.g. "Backend server" or "Main / one-off commands"]
+
+```bash
+cd /path/from/workspace/root
+# optional: export VAR=value
+command1
+command2
+```
+
+### Terminal 2: [role, e.g. "Frontend dev server"] (if needed)
+
+```bash
+cd /path/from/workspace/root
+command1
+command2
+```
+
+[Repeat Terminal 3, 4, … only if the task actually required more terminals.]
+```
+
+- Keep section titles and subsections identical across tasks.
+- Use the same markdown (headers, code blocks, bash).
+- If only one terminal is needed, output a single "Terminal 1" block; do not add fake Terminal 2.
+
+### 3. Multiple terminals (backend, frontend, etc.)
+
+When the task needs **more than one terminal** (e.g. backend server + frontend dev server):
+
+- **Number terminals by role**: Terminal 1, Terminal 2, …
+- **Label each** with its role in the header, e.g.:
+  - "Terminal 1: Backend API"
+  - "Terminal 2: Frontend dev server"
+  - "Terminal 3: Worker / queue"
+- **Order by dependency** when it matters: e.g. start backend before frontend if frontend depends on it.
+- **Per-terminal block**: each terminal gets one code block with:
+  - `cd` from workspace root to the directory for that terminal
+  - All commands that must run in that terminal, in order
+- In the summary, state that multiple terminals are required and what each is for.
+
+Example for backend + frontend:
+
+```
+## Full command chain (from workspace root)
+
+### Terminal 1: Backend server
+
+```bash
+cd server
+npm install
+npm run dev
+```
+
+### Terminal 2: Frontend dev server
+
+```bash
+cd apps/web
+npm install
+npm run dev
+```
+```
+
+### Summary
+
+- **Always** end with a full command chain from workspace root when the task involved commands.
+- **Always** use the same section titles and structure (summary + full chain, optional multiple terminals).
+- **When** multiple processes are required (backend, frontend, workers), use one labeled terminal block per process and keep the format consistent.

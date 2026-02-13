@@ -1,5 +1,5 @@
-import React from "react";
-import { View, Text, StyleSheet, Linking } from "react-native";
+import React, { useMemo } from "react";
+import { View, Text, StyleSheet, Linking, Pressable, Alert } from "react-native";
 import Markdown from "react-native-markdown-display";
 import { theme } from "../theme";
 import type { Message } from "../hooks/useSocket";
@@ -9,17 +9,119 @@ function getFileName(path: string): string {
   return parts[parts.length - 1] ?? path;
 }
 
+const BASH_LANGUAGES = new Set(["bash", "sh", "shell", "zsh"]);
+
+/**
+ * Match http/https URLs (exclude trailing punctuation, but allow dots in path e.g. .html).
+ * Renders according to output-enhancement prompt: prompts/output-enhancement/url.txt
+ * (e.g. "Access the page at:" then URL on next line, or URL on its own line → shown as tappable link).
+ */
+const URL_REGEX = /https?:\/\/[^\s\]\)\}\"']+?(?=[,;:)\]}\s]|$)/g;
+
+/** Wrap bare URLs in markdown link syntax so they render underlined and tappable. Preserves existing [text](url) links. */
+function wrapBareUrlsInMarkdown(content: string): string {
+  const existingLinks: string[] = [];
+  const stripped = content.replace(/\]\((https?:\/\/[^\)]+)\)/g, (_, url) => {
+    existingLinks.push(url);
+    return "]\u200B(" + (existingLinks.length - 1) + ")";
+  });
+  const withWrapped = stripped.replace(URL_REGEX, (url) => `[${url}](${url})`);
+  return withWrapped.replace(/\]\u200B\((\d+)\)/g, (_, i) => "](" + existingLinks[Number(i)] + ")");
+}
+
 interface MessageBubbleProps {
   message: Message;
   /** When true, the bubble content is the "Terminated" label (muted style). */
   isTerminatedLabel?: boolean;
+  /** When provided, bash code blocks are tappable; user can choose to run the command in a new terminal. */
+  onRunBashCommand?: (command: string) => void;
+  /** When provided, links (including bare URLs) open in the app's internal browser instead of external. */
+  onOpenUrl?: (url: string) => void;
 }
 
-export function MessageBubble({ message, isTerminatedLabel }: MessageBubbleProps) {
+export function MessageBubble({ message, isTerminatedLabel, onRunBashCommand, onOpenUrl }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
   const avatarText = message.role === "assistant" ? "C" : message.role === "user" ? "You" : "!";
   const refs = message.codeReferences ?? [];
+
+  const markdownRules = useMemo(() => {
+    const rules: Record<string, React.ComponentType<any>> = {};
+    // Custom link rule: use full href from AST and open in internal browser when onOpenUrl provided
+    if (onOpenUrl) {
+      rules.link = (
+        node: { key?: string; attributes?: { href?: string } },
+        children: React.ReactNode,
+        _parent: unknown,
+        styles: Record<string, unknown>
+      ) => {
+        const href = (node.attributes?.href ?? "").trim();
+        return (
+          <Pressable
+            key={node.key}
+            onPress={() => href && onOpenUrl(href)}
+            style={({ pressed }) => (pressed ? { opacity: 0.8 } : undefined)}
+          >
+            <Text style={[markdownStyles.link]}>{children}</Text>
+          </Pressable>
+        );
+      };
+    }
+    if (onRunBashCommand) {
+      rules.fence = (
+        node: { key?: string; content?: string; sourceInfo?: string },
+        _children: React.ReactNode,
+        _parent: unknown,
+        mdStyles: Record<string, unknown>,
+        inheritedStyles: Record<string, unknown> = {}
+      ) => {
+        let content = node.content ?? "";
+        if (typeof content === "string" && content.charAt(content.length - 1) === "\n") {
+          content = content.substring(0, content.length - 1);
+        }
+        const lang = (node.sourceInfo ?? "").trim().toLowerCase().split(/\s/)[0] ?? "";
+        const isBash = BASH_LANGUAGES.has(lang);
+        const handleRunPress = () => {
+          const trimmed = String(content).trim();
+          if (!trimmed) return;
+          Alert.alert(
+            "Run command",
+            "Open a new terminal and run this command?",
+            [
+              { text: "Cancel", style: "cancel" },
+              { text: "Run", onPress: () => onRunBashCommand(trimmed) },
+            ]
+          );
+        };
+        const codeBlock = (
+          <Text key={node.key} style={[inheritedStyles, mdStyles.fence ?? markdownStyles.fence]}>
+            {content}
+          </Text>
+        );
+        if (isBash) {
+          return (
+            <View key={node.key} style={styles.bashCodeBlockWrapper}>
+              <View style={styles.bashCodeBlockHeader}>
+                <View style={styles.bashCodeBlockHeaderSpacer} />
+                <Pressable
+                  onPress={handleRunPress}
+                  style={({ pressed }) => [styles.bashRunButton, pressed && styles.bashRunButtonPressed]}
+                  hitSlop={8}
+                >
+                  <Text style={styles.bashRunButtonText}>Run</Text>
+                </Pressable>
+              </View>
+              <View style={styles.bashCodeBlock}>
+                {codeBlock}
+              </View>
+            </View>
+          );
+        }
+        return codeBlock;
+      };
+    }
+    return Object.keys(rules).length > 0 ? rules : undefined;
+  }, [onRunBashCommand, onOpenUrl]);
 
   return (
     <View style={[styles.row, isUser && styles.rowUser]}>
@@ -29,7 +131,7 @@ export function MessageBubble({ message, isTerminatedLabel }: MessageBubbleProps
         </View>
       )}
       <View style={[styles.bubble, isUser && styles.bubbleUser, isSystem && styles.bubbleSystem]}>
-        {message.content ? (
+        {message.content && message.content.trim() !== "" ? (
           isTerminatedLabel ? (
             <Text
               style={[styles.bubbleText, styles.bubbleTextTerminated]}
@@ -51,14 +153,23 @@ export function MessageBubble({ message, isTerminatedLabel }: MessageBubbleProps
             <Markdown
               style={markdownStyles}
               mergeStyle
+              rules={markdownRules}
               onLinkPress={(url) => {
+                if (onOpenUrl) {
+                  onOpenUrl(url);
+                  return false;
+                }
                 Linking.openURL(url);
                 return false;
               }}
             >
-              {message.content}
+              {wrapBareUrlsInMarkdown(message.content)}
             </Markdown>
           )
+        ) : !isUser && !isSystem ? (
+          <Text style={[styles.bubbleText, styles.bubbleTextPlaceholder]} selectable={false}>
+            …
+          </Text>
         ) : null}
         {refs.length > 0 && (
           <View style={[styles.refPills, message.content ? styles.refPillsWithContent : null]}>
@@ -158,6 +269,10 @@ const styles = StyleSheet.create({
     color: theme.textMuted,
     fontStyle: "italic",
   },
+  bubbleTextPlaceholder: {
+    color: theme.textMuted,
+    fontStyle: "italic",
+  },
   refPills: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -184,5 +299,45 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: theme.textPrimary,
     fontWeight: "500",
+  },
+  bashCodeBlockWrapper: {
+    alignSelf: "stretch",
+    marginVertical: 4,
+    borderRadius: 8,
+    overflow: "hidden",
+    backgroundColor: "#f0ebe4",
+    borderWidth: 1,
+    borderColor: theme.borderColor,
+  },
+  bashCodeBlockHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.borderColor,
+    backgroundColor: "#e8e2da",
+  },
+  bashCodeBlockHeaderSpacer: {
+    flex: 1,
+  },
+  bashRunButton: {
+    paddingVertical: 4,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    backgroundColor: theme.accent,
+  },
+  bashRunButtonPressed: {
+    opacity: 0.85,
+  },
+  bashRunButtonText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#fff",
+  },
+  bashCodeBlock: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
 });

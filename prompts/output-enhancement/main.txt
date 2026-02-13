@@ -1,0 +1,3 @@
+# Output Enhancement
+
+Enhance and enforce the output of the command execution to be more detailed and helpful.

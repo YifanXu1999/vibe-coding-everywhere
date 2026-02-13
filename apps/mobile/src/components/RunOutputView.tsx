@@ -27,11 +27,36 @@ interface RunOutputViewProps {
   flexOutput?: boolean;
   /** When false, do not show the last command bar at the bottom (e.g. when user types in an input below). Default true. */
   showCommand?: boolean;
+  /** When provided, URLs in output are shown as underlined links and open in the app's internal browser. */
+  onOpenUrl?: (url: string) => void;
 }
 
 /** Strip ANSI escape sequences for display. */
 function stripAnsi(str: string): string {
   return str.replace(/\x1B\[[0-9;?]*[ -/]*[@-~]|\x1B\][^\x07]*(?:\x07|\x1B\\)|\x1B[@-_]|\x1B.|[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
+}
+
+/** Match http/https URLs; trailing punctuation excluded, but dots in path (e.g. .html) included. */
+const URL_REGEX = /https?:\/\/[^\s\]\)\}\"']+?(?=[,;:)\]}\s]|$)/g;
+
+type LineSegment = { type: "text"; value: string } | { type: "url"; value: string };
+
+function segmentLine(text: string): LineSegment[] {
+  const segments: LineSegment[] = [];
+  let lastEnd = 0;
+  let m: RegExpExecArray | null;
+  const re = new RegExp(URL_REGEX.source, "g");
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > lastEnd) {
+      segments.push({ type: "text", value: text.slice(lastEnd, m.index) });
+    }
+    segments.push({ type: "url", value: m[0] });
+    lastEnd = re.lastIndex;
+  }
+  if (lastEnd < text.length) {
+    segments.push({ type: "text", value: text.slice(lastEnd) });
+  }
+  return segments.length > 0 ? segments : [{ type: "text", value: text }];
 }
 
 export function RunOutputView({
@@ -44,6 +69,7 @@ export function RunOutputView({
   onFullScreen,
   flexOutput,
   showCommand = true,
+  onOpenUrl,
 }: RunOutputViewProps) {
   const scrollRef = useRef<ScrollView>(null);
 
@@ -91,15 +117,36 @@ export function RunOutputView({
           showsHorizontalScrollIndicator={false}
           nestedScrollEnabled
         >
-          {lines.map((line, i) => (
-            <Text
-              key={i}
-              style={[styles.line, line.type === "stderr" ? styles.stderr : styles.stdout]}
-              selectable
-            >
-              {stripAnsi(line.text)}
-            </Text>
-          ))}
+          {lines.map((line, i) => {
+            const plain = stripAnsi(line.text);
+            const segments = segmentLine(plain);
+            const hasUrl = segments.some((s) => s.type === "url");
+            const lineStyle = [styles.line, line.type === "stderr" ? styles.stderr : styles.stdout];
+            if (hasUrl && onOpenUrl) {
+              return (
+                <Text key={i} style={lineStyle} selectable>
+                  {segments.map((seg, j) =>
+                    seg.type === "text" ? (
+                      <Text key={j}>{seg.value}</Text>
+                    ) : (
+                      <Text
+                        key={j}
+                        style={styles.link}
+                        onPress={() => onOpenUrl(seg.value)}
+                      >
+                        {seg.value}
+                      </Text>
+                    )
+                  )}
+                </Text>
+              );
+            }
+            return (
+              <Text key={i} style={lineStyle} selectable>
+                {plain}
+              </Text>
+            );
+          })}
         </ScrollView>
       )}
       {showCommand && command != null && command !== "" && (
@@ -214,6 +261,10 @@ const styles = StyleSheet.create({
   },
   stderr: {
     color: theme.danger,
+  },
+  link: {
+    textDecorationLine: "underline",
+    color: theme.accent,
   },
   emptyPlaceholder: {
     justifyContent: "center",

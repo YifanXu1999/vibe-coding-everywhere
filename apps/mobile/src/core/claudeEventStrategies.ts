@@ -1,6 +1,46 @@
 import type { Message, PermissionDenial, PendingAskUserQuestion } from "./types";
 import { isAskUserQuestionPayload } from "../utils/claudeStream";
 
+/** Basename for display (no Node path dependency). */
+function basename(filePath: string): string {
+  const s = String(filePath).replace(/\\/g, "/").trim();
+  const parts = s.split("/");
+  return parts[parts.length - 1] ?? s;
+}
+
+/** Format one tool_use block as a short human-readable markdown line for the assistant bubble. */
+function formatToolUseForDisplay(name: string, input: unknown): string {
+  const obj = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const filePath = obj.file_path ?? obj.path;
+  const file = filePath != null ? basename(String(filePath)) : null;
+
+  switch (name) {
+    case "Read":
+      return file ? `📖 Reading \`${file}\`` : "📖 Reading file";
+    case "Edit":
+      return file ? `✏️ Editing \`${file}\`` : "✏️ Editing file";
+    case "Write":
+      return file ? `📝 Writing \`${file}\`` : "📝 Writing file";
+    case "Bash":
+      return "🖥 Running command";
+    case "TodoWrite":
+      return "📋 Updating tasks";
+    case "AskUserQuestion": {
+      const questions = obj.questions as Array<{ question?: string; header?: string; options?: Array<{ label?: string }> }> | undefined;
+      const q = Array.isArray(questions) && questions[0] ? questions[0] : null;
+      const header = q?.header ? `${q.header}: ` : "";
+      const question = (q?.question ?? "Question").slice(0, 80);
+      const opts = q?.options?.map((o) => o.label ?? "").filter(Boolean).slice(0, 4).join(", ");
+      return opts ? `❓ **${header}**${question} — _${opts}_` : `❓ **${header}**${question}`;
+    }
+    case "Grep":
+    case "Glob":
+      return file ? `🔍 \`${name}\` in \`${file}\`` : `🔍 ${name}`;
+    default:
+      return file ? `**${name}** \`${file}\`` : `**${name}**`;
+  }
+}
+
 /**
  * Context passed to Claude event handlers (Strategy pattern).
  * New event types can be supported by registering a handler without modifying the dispatcher (Open-Closed).
@@ -39,16 +79,24 @@ function createHandlerRegistry(ctx: ClaudeEventContext): Map<string, ClaudeEvent
   });
 
   registry.set("assistant", (data) => {
-    const contents = (data.message as { content?: Array<{ type?: string; text?: string }> })?.content ?? [];
+    const contents = (data.message as { content?: Array<{ type?: string; text?: string; name?: string; input?: unknown }> })?.content ?? [];
+    // Append human-readable lines for tool_use so the UI shows what Claude is doing.
+    for (const c of contents) {
+      if (c.type === "tool_use" && c.name) {
+        const line = formatToolUseForDisplay(c.name, c.input);
+        ctx.appendAssistantText(line + "\n\n");
+      }
+    }
     const full = contents
       .filter((c) => c.type === "text")
       .map((c) => (c as { text?: string }).text ?? "")
       .join("");
-    if (!full) return;
-    const current = ctx.getCurrentAssistantContent();
-    // Only append delta so we don't re-display full text when a final "assistant" event arrives at stream end.
-    const delta = current.length > 0 && full.startsWith(current) ? full.slice(current.length) : full;
-    if (delta) ctx.appendAssistantText(delta);
+    if (full) {
+      const current = ctx.getCurrentAssistantContent();
+      // Only append delta so we don't re-display full text when a final "assistant" event arrives at stream end.
+      const delta = current.length > 0 && full.startsWith(current) ? full.slice(current.length) : full;
+      if (delta) ctx.appendAssistantText(delta);
+    }
   });
 
   registry.set("stream_event", (data) => {
@@ -70,7 +118,20 @@ function createHandlerRegistry(ctx: ClaudeEventContext): Map<string, ClaudeEvent
   registry.set("permission_request", inputLikeHandler);
 
   registry.set("user", () => {});
-  registry.set("result", () => {});
+
+  registry.set("result", (data) => {
+    const resultText = typeof (data as { result?: string }).result === "string"
+      ? (data as { result: string }).result.trim()
+      : "";
+    if (!resultText) return;
+    const current = ctx.getCurrentAssistantContent();
+    // Append result summary only when it's not already the same as current content (avoid duplicate).
+    const curTrim = current.trim();
+    const resultTrim = resultText.trim();
+    if (!curTrim.endsWith(resultTrim) && resultTrim.length > 0) {
+      ctx.appendAssistantText("\n\n---\n\n" + resultText);
+    }
+  });
 
   return registry;
 }

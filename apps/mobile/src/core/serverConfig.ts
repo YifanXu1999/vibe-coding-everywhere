@@ -29,7 +29,7 @@ export function createDefaultServerConfig(): IServerConfig {
         const isSamePort = previewPort === basePort;
         if (isSameHost && isSamePort) {
           const pathname = (parsed.pathname || "/").replace(/^\//, "") || "index.html";
-          const cleanUrl = `${base.replace(/\/$/, "")}/${pathname}`;
+          const cleanUrl = `${base.replace(/\/$/, "")}/${pathname}${parsed.search || ""}${parsed.hash || ""}`;
           console.log("[PreviewURL] resolvePreviewUrl: base=" + base + " | incoming=" + previewUrl + " | resolved=" + cleanUrl);
           return cleanUrl;
         }
@@ -47,7 +47,7 @@ export function createDefaultServerConfig(): IServerConfig {
             }
           }
           const portSuffix = parsed.port ? `:${parsed.port}` : "";
-          const rewritten = `${baseParsed.protocol}//${portToPortHost}${portSuffix}${parsed.pathname || "/"}${parsed.search || ""}`;
+          const rewritten = `${baseParsed.protocol}//${portToPortHost}${portSuffix}${parsed.pathname || "/"}${parsed.search || ""}${parsed.hash || ""}`;
           console.log("[PreviewURL] resolvePreviewUrl: port-to-port | incoming=" + previewUrl + " | resolved=" + rewritten);
           return rewritten;
         }

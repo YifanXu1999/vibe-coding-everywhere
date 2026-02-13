@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { io, Socket } from "socket.io-client";
 import {
   extractRenderCommandAndUrl,
+  filterBashNoise,
   stripAnsi,
   stripTrailingIncompleteTag,
   isClaudeStream,
@@ -123,12 +124,24 @@ export function useSocket(options: UseSocketOptions = {}) {
       setMessages((prev) => {
         const last = prev[prev.length - 1];
         if (last?.role === "assistant") {
+          const trimmed = cleaned.trim();
+          if (trimmed === "") {
+            return prev.slice(0, -1);
+          }
           return [...prev.slice(0, -1), { ...last, content: cleaned }];
         }
         return prev;
       });
       currentAssistantContentRef.current = cleaned;
     }
+    setMessages((prev) => {
+      const last = prev[prev.length - 1];
+      if (last?.role === "assistant" && (last.content ?? "").trim() === "") {
+        return prev.slice(0, -1);
+      }
+      return prev;
+    });
+    currentAssistantContentRef.current = "";
   }, []);
 
   const deduplicateDenials = useCallback((denials: PermissionDenial[]): PermissionDenial[] => {
@@ -277,16 +290,20 @@ export function useSocket(options: UseSocketOptions = {}) {
       }
     );
     socket.on("run-render-stdout", ({ terminalId, chunk }: { terminalId: string; chunk: string }) => {
+      const filtered = filterBashNoise(chunk);
+      if (!filtered) return;
       setTerminals((prev) =>
         prev.map((t) =>
-          t.id === terminalId ? { ...t, lines: [...t.lines, { type: "stdout" as const, text: chunk }] } : t
+          t.id === terminalId ? { ...t, lines: [...t.lines, { type: "stdout" as const, text: filtered }] } : t
         )
       );
     });
     socket.on("run-render-stderr", ({ terminalId, chunk }: { terminalId: string; chunk: string }) => {
+      const filtered = filterBashNoise(chunk);
+      if (!filtered) return;
       setTerminals((prev) =>
         prev.map((t) =>
-          t.id === terminalId ? { ...t, lines: [...t.lines, { type: "stderr" as const, text: chunk }] } : t
+          t.id === terminalId ? { ...t, lines: [...t.lines, { type: "stderr" as const, text: filtered }] } : t
         )
       );
     });

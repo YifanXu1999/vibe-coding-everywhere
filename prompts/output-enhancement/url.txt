@@ -1,0 +1,37 @@
+## Openable URL output format
+
+When the task produces a URL that the user can open (e.g. preview, dev server, local server, docs), output it so the app can show it as a **clickable link** that opens in the in-app browser.
+
+### Rules
+
+1. **Put the URL where it can be linkified**
+   - Prefer putting the **raw URL on its own line** (e.g. `http://localhost:3000/abc.html`).
+   - The app detects `http://` and `https://` URLs in message text and renders them as underlined, tappable links.
+
+2. **Optional label line**
+   - You may add a short label on the line above the URL, for example:
+     - `**Access the page at:**`
+     - `**Open in browser:**`
+   - Then put the URL on the **next line**, with no extra characters, so the app can parse and linkify it.
+
+3. **Do not hide the URL only in code**
+   - If the URL is the main thing the user should open, do not put it only inside a code block. Put it in normal prose or use the labeled format above so the app can turn it into a link.
+   - You may still include the same URL inside a code block for copy-paste if needed.
+
+### Example (expected output)
+
+```
+The server is running. Access the page at:
+
+http://localhost:3001/abc.html
+```
+
+Or:
+
+```
+**Access the page at:**
+
+http://localhost:3001/abc.html
+```
+
+The app will render the URL line as an underlined link; tapping it opens the page in the in-app browser.

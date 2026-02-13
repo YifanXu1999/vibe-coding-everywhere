@@ -60,6 +60,7 @@ export default function App() {
   const [pendingCodeRefs, setPendingCodeRefs] = useState<CodeRefPayload[]>([]);
   const flatListRef = useRef<FlatList>(null);
   const terminalCarouselRef = useRef<FlatList>(null);
+  const terminalSelectedByTapRef = useRef(false);
   const lastScrollToEndTimeRef = useRef(0);
   const SCROLL_TO_END_THROTTLE_MS = 400;
   const TERMINAL_CARD_GAP = 12;
@@ -91,6 +92,7 @@ export default function App() {
     retryAfterPermission,
     dismissPermission,
     runNewTerminal,
+    runCommandInNewTerminal,
     runUserCommand,
     terminateRunProcess,
     terminateAgent,
@@ -275,6 +277,8 @@ export default function App() {
                   <MessageBubble
                     message={messageToShow}
                     isTerminatedLabel={showTerminated}
+                    onRunBashCommand={runCommandInNewTerminal}
+                    onOpenUrl={handleOpenPreviewInApp}
                   />
                 );
               }}
@@ -319,6 +323,7 @@ export default function App() {
                             : undefined
                         }
                         maxHeight={220}
+                        onOpenUrl={handleOpenPreviewInApp}
                       />
                     </View>
                   )}
@@ -449,6 +454,10 @@ export default function App() {
                       index,
                     })}
                     onMomentumScrollEnd={(e) => {
+                      if (terminalSelectedByTapRef.current) {
+                        terminalSelectedByTapRef.current = false;
+                        return;
+                      }
                       const index = Math.round(
                         e.nativeEvent.contentOffset.x / TERMINAL_CARD_STEP
                       );
@@ -465,7 +474,10 @@ export default function App() {
                             { width: TERMINAL_CARD_WIDTH },
                             isSelected && styles.fullScreenTerminalCardSelected,
                           ]}
-                          onPress={() => setSelectedTerminalId(term.id)}
+                          onPress={() => {
+                            terminalSelectedByTapRef.current = true;
+                            setSelectedTerminalId(term.id);
+                          }}
                           activeOpacity={1}
                         >
                           <View style={styles.fullScreenTerminalCardInner}>
@@ -514,6 +526,7 @@ export default function App() {
                               )
                           : undefined
                       }
+                      onOpenUrl={handleOpenPreviewInApp}
                     />
                     {(() => {
                       const inputState = getTerminalInputState(

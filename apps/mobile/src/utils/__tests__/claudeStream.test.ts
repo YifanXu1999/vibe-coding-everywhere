@@ -5,6 +5,7 @@
 
 import {
   stripAnsi,
+  filterBashNoise,
   stripTrailingIncompleteTag,
   extractRenderCommandAndUrl,
   isAskUserQuestionPayload,
@@ -52,6 +53,39 @@ describe("claudeStream utilities", () => {
     it("handles mixed content correctly", () => {
       const input = "\x1B[32m✓\x1B[0m Test passed \x1B[31m(1ms)\x1B[0m";
       expect(stripAnsi(input)).toBe("✓ Test passed (1ms)");
+    });
+  });
+
+  describe("filterBashNoise", () => {
+    it("filters bash no job control message", () => {
+      expect(filterBashNoise("bash: no job control in this shell\n")).toBe("");
+    });
+
+    it("filters zsh default shell message", () => {
+      const msg = "The default interactive shell is now zsh. To update your account to use zsh, please run `chsh -s /bin/zsh`.\n";
+      expect(filterBashNoise(msg)).toBe("");
+    });
+
+    it("filters Apple support URL message", () => {
+      expect(filterBashNoise("For more details, please visit https://support.apple.com/kb/HT208050.\n")).toBe("");
+    });
+
+    it("keeps real terminal output", () => {
+      expect(filterBashNoise("Serving HTTP on 0.0.0.0 port 3000\n")).toBe("Serving HTTP on 0.0.0.0 port 3000\n");
+    });
+
+    it("strips ANSI codes before filtering", () => {
+      expect(filterBashNoise("\x1B[31mbash: no job control in this shell\x1B[0m\n")).toBe("");
+    });
+
+    it("filters zsh message when split across lines", () => {
+      expect(filterBashNoise("The default interactive shell is now zsh.\n")).toBe("");
+      expect(filterBashNoise("To update your account to use zsh, please run `chsh -s /bin/zsh`.\n")).toBe("");
+    });
+
+    it("filters bash version prompt", () => {
+      expect(filterBashNoise("bash-3.2$\n")).toBe("");
+      expect(filterBashNoise("bash-5.0$ \n")).toBe("");
     });
   });
 

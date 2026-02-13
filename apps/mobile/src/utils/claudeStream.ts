@@ -11,6 +11,33 @@ export function stripAnsi(value: string): string {
   return value.replace(ANSI_REGEX, "");
 }
 
+/** Known bash/zsh system messages to hide from terminal output display. */
+const BASH_NOISE_PATTERNS = [
+  /^bash:\s*no job control in this shell\s*$/i,
+  /^The default interactive shell is now zsh\.\s*To update your account to use zsh,\s*please run\s+[`']chsh\s+-s\s+\/bin\/zsh[`']\.?\s*$/i,
+  /^The default interactive shell is now zsh\.\s*$/i,
+  /^To update your account to use zsh,\s*please run\s+[`']chsh\s+-s\s+\/bin\/zsh[`']\.?\s*$/i,
+  /^For more details,\s*please visit\s+https:\/\/support\.apple\.com\/kb\/HT208050\.?\s*$/i,
+  /^bash-\d+\.\d+\$?\s*$/,
+];
+
+/**
+ * Filter out known bash shell system messages from terminal output.
+ * Returns the filtered string, or empty string if the entire chunk should be hidden.
+ */
+export function filterBashNoise(chunk: string): string {
+  if (!chunk || typeof chunk !== "string") return "";
+  const plain = stripAnsi(chunk);
+  const lines = plain.split(/\r?\n/);
+  const kept = lines.filter((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return true; // keep blank lines
+    return !BASH_NOISE_PATTERNS.some((p) => p.test(trimmed));
+  });
+  const result = kept.join("\n");
+  return result.trim() ? result : "";
+}
+
 /** Strip trailing incomplete XML/HTML tag (e.g. "<u" from truncated "<u>" or "<url...") that appears at end of chat. */
 export function stripTrailingIncompleteTag(value: string): string {
   if (!value || typeof value !== "string") return value;

@@ -6,6 +6,7 @@ import { spawn, execSync } from "child_process";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
+import { getFormattedAccessRestrictionPrompt } from "./prompts/access-restriction/formatAccessRestrictionPrompt.js";
 
 /** Kill any process listening on the given port (e.g. leftover from Claude verification). No-op if port invalid or none bound. */
 function killProcessOnPort(port) {
@@ -38,7 +39,7 @@ function getWorkspaceCwd() {
       break;
     }
   }
-  const raw = fromCli ?? process.env.WORKSPACE ?? process.env.WORKSPACE_CWD ?? path.join(__dirname, "workspace");
+  const raw = fromCli ?? process.env.WORKSPACE ?? process.env.WORKSPACE_CWD ?? path.join(__dirname, "..", "workspace");
   const resolved = path.resolve(raw);
   if (!fs.existsSync(resolved)) {
     console.warn(`[workspace] Path does not exist: ${resolved}. Using server directory.`);
@@ -126,25 +127,95 @@ function getMockClaudeLogPath(sequenceFromPayload) {
   return path.join(WORKSPACE_CWD, "workspace", "mock-claude-output.log");
 }
 
-const PAGE_RENDER_SYSTEM_PROMPT = `
-## Page-render preview rule
+/** Directory for prompt files (prompts/). Resolved relative to server. */
+const PROMPTS_DIR = path.join(__dirname, "prompts");
 
-When the task produces browser-viewable content (HTML, static site, dev server):
-- Use a random port if the user does not specify one.
-- Test the command(s) in a fresh terminal at workspace root (up to 3 attempts). Record logs.
-- **Decide from the test result only:** Verified = command(s) ran with no errors. Not verified = "permission denied", "access denied", "EACCES", or any failure in the logs.
-- **After verifying:** If the command starts a long-running server (e.g. http.server, dev server), terminate that test process (e.g. Ctrl+C) so the port is free. The user will run the same command again in the app; if the test process is left running, the app will get "Address already in use".
-- **Output exactly one format.** When not verified, you must NOT output "Run the following command for render" or "URL for preview" — those lines are only for the verified case.
+/**
+ * Load a system prompt from prompts/<name>.txt.
+ * @param {string} name - Filename or path without extension (e.g. "page-render", "output/command")
+ * @returns {string} Trimmed file content, or "" if file missing/unreadable
+ */
+function loadPrompt(name) {
+  if (!name || typeof name !== "string") return "";
+  const base = name.replace(/\.txt$/, "");
+  const filePath = path.join(PROMPTS_DIR, `${base}.txt`);
+  try {
+    if (fs.existsSync(filePath)) {
+      return fs.readFileSync(filePath, "utf8").trim();
+    }
+  } catch (err) {
+    console.warn("[prompts] Failed to load", filePath, err.message);
+  }
+  return "";
+}
 
-**If verified** (output only these two lines, no other text):
-Run the following command for render: "<command(s)>"
-URL for preview: "<url_to_render>"
+/**
+ * Read content from a file in a prompt folder. Returns trimmed string or "".
+ * @param {string} folderName - Subfolder name under prompts/ (e.g. "access-restriction")
+ * @param {string} filename - File name (e.g. "main.txt", "command.txt")
+ * @returns {string}
+ */
+function readPromptFile(folderName, filename) {
+  const filePath = path.join(PROMPTS_DIR, folderName, filename);
+  try {
+    if (fs.existsSync(filePath)) {
+      return fs.readFileSync(filePath, "utf8").trim();
+    }
+  } catch (err) {
+    console.warn("[prompts] Failed to read", filePath, err.message);
+  }
+  return "";
+}
 
-**If not verified** (output only this line, no other text):
-Need permission for the following commands: "<command(s)>"
+/**
+ * Get the "existing" body content for a prompt folder (formatted .md or command.txt).
+ * @param {string} folderName
+ * @returns {string}
+ */
+function getExistingPromptBody(folderName) {
+  if (folderName === "access-restriction") {
+    return getFormattedAccessRestrictionPrompt(WORKSPACE_CWD);
+  }
+  if (folderName === "output-enhancement") {
+    const command = readPromptFile(folderName, "command.txt");
+    const url = readPromptFile(folderName, "url.txt");
+    return [command, url].filter(Boolean).join("\n\n");
+  }
+  return readPromptFile(folderName, "command.txt");
+}
 
-<command(s)> = full, copy-pastable command(s) from workspace root to serve the page. <url_to_render> = URL to view after running.
-`
+/**
+ * Build one prompt part for a folder: main.txt content combined with existing body.
+ * @param {string} folderName
+ * @returns {string}
+ */
+function getPromptPartForFolder(folderName) {
+  const mainContent = readPromptFile(folderName, "main.txt");
+  const bodyContent = getExistingPromptBody(folderName);
+  const parts = [mainContent, bodyContent].filter(Boolean);
+  return parts.join("\n\n");
+}
+
+/** Combined system prompt: for each subfolder of prompts/, main.txt + existing body, then all concatenated. */
+function getChatSystemPrompt() {
+  let dirs = [];
+  try {
+    dirs = fs.readdirSync(PROMPTS_DIR, { withFileTypes: true })
+      .filter((d) => d.isDirectory() && !d.name.startsWith("."))
+      .map((d) => d.name)
+      .sort();
+  } catch (err) {
+    console.warn("[prompts] Failed to list", PROMPTS_DIR, err.message);
+  }
+  const parts = dirs.map(getPromptPartForFolder).filter(Boolean);
+  return parts.join("\n\n");
+}
+
+if (process.argv.includes("--print-system-prompt")) {
+  console.log(getChatSystemPrompt());
+  process.exit(0);
+}
+
 const ANSI_REGEX =
   /\x1B\[[0-9;?]*[ -/]*[@-~]|\x1B\][^\x07]*(?:\x07|\x1B\\)|\x1B[@-_]|\x1B.|[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
 
@@ -449,15 +520,16 @@ io.on("connection", (socket) => {
     return ptyProcess !== null || mockReplayActive;
   }
 
-  function spawnClaude(prompt, permissionMode, allowedTools, useContinue) {
+  function spawnClaude(prompt, permissionMode, allowedTools, useContinue, appendSystemPrompt) {
     if (ptyProcess) {
       emitError(socket, "A Claude process is already running. Wait for it to finish.");
       return;
     }
+    const systemPromptToUse = typeof appendSystemPrompt === "string" ? appendSystemPrompt : "";
     const args = [
       "--output-format", "stream-json",
       "--verbose",
-      "--append-system-prompt", PAGE_RENDER_SYSTEM_PROMPT,
+      ...(systemPromptToUse ? ["--append-system-prompt", systemPromptToUse] : []),
       ...(useContinue ? ["-c"] : []),
       ...(permissionMode ? ["--permission-mode", permissionMode] : []),
       ...(Array.isArray(allowedTools) && allowedTools.length > 0
@@ -483,6 +555,9 @@ io.on("connection", (socket) => {
         logStream = fs.createWriteStream(CLAUDE_OUTPUT_LOG, { flags: "a" });
         const header = `\n--- Claude session started ${new Date().toISOString()} ---\n`;
         logStream.write(header);
+        if (systemPromptToUse) {
+          logStream.write(`[system-prompt] append (used):\n${systemPromptToUse}\n--- end system prompt ---\n`);
+        }
       } catch (err) {
         console.warn("[claude-log] Failed to create log file:", err.message);
       }
@@ -567,8 +642,12 @@ io.on("connection", (socket) => {
       }, seq);
       return;
     }
-    console.log("[submit-prompt] system prompt (append):", PAGE_RENDER_SYSTEM_PROMPT);
-    spawnClaude(prompt, permissionMode || null, allowedTools, useContinue);
+    const appendSystemPrompt = getChatSystemPrompt();
+    console.log("[system-prompt] used (append):", appendSystemPrompt ? `${appendSystemPrompt.slice(0, 80)}...` : "(none)");
+    if (appendSystemPrompt) {
+      console.log("[system-prompt] full content:\n", appendSystemPrompt);
+    }
+    spawnClaude(prompt, permissionMode || null, allowedTools, useContinue, appendSystemPrompt);
   });
 
   socket.on("input", (data) => {
