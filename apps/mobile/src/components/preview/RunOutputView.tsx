@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useMemo } from "react";
 import {
   View,
   Text,
@@ -7,7 +7,7 @@ import {
   Platform,
   TouchableOpacity,
 } from "react-native";
-import { theme } from "../../theme/index";
+import { useTheme } from "../../theme/index";
 
 export type RunOutputLine = { type: "stdout" | "stderr"; text: string };
 
@@ -71,7 +71,77 @@ export function RunOutputView({
   showCommand = true,
   onOpenUrl,
 }: RunOutputViewProps) {
+  const theme = useTheme();
   const scrollRef = useRef<ScrollView>(null);
+  const styles = useMemo(
+    () =>
+      StyleSheet.create({
+        container: {
+          width: "100%",
+          borderWidth: 1,
+          borderColor: theme.borderColor,
+          backgroundColor: theme.beigeBg,
+          borderRadius: 10,
+          overflow: "hidden",
+        },
+        containerFlex: { flex: 1, minHeight: 0 },
+        titleRow: {
+          flexDirection: "row" as const,
+          alignItems: "center",
+          justifyContent: "space-between",
+          paddingHorizontal: 10,
+          paddingVertical: 6,
+          borderBottomWidth: 1,
+          borderBottomColor: theme.borderColor,
+          borderTopLeftRadius: 10,
+          borderTopRightRadius: 10,
+        },
+        title: { fontSize: 12, fontWeight: "600" as const, color: theme.textMuted },
+        titleActions: { flexDirection: "row" as const, alignItems: "center", gap: 12 },
+        titleActionButton: { padding: 4 },
+        fullScreenIcon: { fontSize: 16, color: theme.textMuted },
+        commandBar: {
+          flexDirection: "row" as const,
+          alignItems: "center",
+          paddingHorizontal: 10,
+          paddingVertical: 6,
+          borderTopWidth: 1,
+          borderTopColor: theme.borderColor,
+          backgroundColor: theme.beigeBg,
+          borderBottomLeftRadius: 10,
+          borderBottomRightRadius: 10,
+        },
+        commandPrefix: {
+          fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+          fontSize: 12,
+          color: theme.textMuted,
+          marginRight: 4,
+        },
+        commandText: {
+          flex: 1,
+          fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+          fontSize: 12,
+          color: theme.textPrimary,
+        },
+        terminateButton: { flexDirection: "row" as const, alignItems: "center", gap: 4 },
+        terminateIcon: { fontSize: 18, fontWeight: "600" as const, color: theme.accent, lineHeight: 20 },
+        terminateText: { fontSize: 12, color: theme.accent },
+        scroll: { maxHeight: 200 },
+        scrollFlex: { flex: 1, minHeight: 120 },
+        content: { padding: 10, paddingBottom: 16 },
+        line: {
+          fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+          fontSize: 12,
+          lineHeight: 18,
+        },
+        stdout: { color: theme.textPrimary },
+        stderr: { color: theme.danger },
+        link: { textDecorationLine: "underline" as const, color: theme.accent },
+        emptyPlaceholder: { justifyContent: "center", padding: 16 },
+        emptyPlaceholderText: { fontSize: 13, color: theme.textMuted, textAlign: "center" as const },
+      }),
+    [theme]
+  );
 
   useEffect(() => {
     if (lines.length > 0) {
@@ -161,118 +231,3 @@ export function RunOutputView({
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    width: "100%",
-    borderWidth: 1,
-    borderColor: theme.borderColor,
-    backgroundColor: theme.beigeBg,
-    borderRadius: 10,
-    overflow: "hidden",
-  },
-  containerFlex: {
-    flex: 1,
-    minHeight: 0,
-  },
-  titleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.borderColor,
-    borderTopLeftRadius: 10,
-    borderTopRightRadius: 10,
-  },
-  title: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: theme.textMuted,
-  },
-  titleActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  titleActionButton: {
-    padding: 4,
-  },
-  fullScreenIcon: {
-    fontSize: 16,
-    color: theme.textMuted,
-  },
-  commandBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderTopWidth: 1,
-    borderTopColor: theme.borderColor,
-    backgroundColor: theme.beigeBg,
-    borderBottomLeftRadius: 10,
-    borderBottomRightRadius: 10,
-  },
-  commandPrefix: {
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-    fontSize: 12,
-    color: theme.textMuted,
-    marginRight: 4,
-  },
-  commandText: {
-    flex: 1,
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-    fontSize: 12,
-    color: theme.textPrimary,
-  },
-  terminateButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-  },
-  terminateIcon: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: theme.accent,
-    lineHeight: 20,
-  },
-  terminateText: {
-    fontSize: 12,
-    color: theme.accent,
-  },
-  scroll: {
-    maxHeight: 200,
-  },
-  scrollFlex: {
-    flex: 1,
-    minHeight: 120,
-  },
-  content: {
-    padding: 10,
-    paddingBottom: 16,
-  },
-  line: {
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-    fontSize: 12,
-    lineHeight: 18,
-  },
-  stdout: {
-    color: theme.textPrimary,
-  },
-  stderr: {
-    color: theme.danger,
-  },
-  link: {
-    textDecorationLine: "underline",
-    color: theme.accent,
-  },
-  emptyPlaceholder: {
-    justifyContent: "center",
-    padding: 16,
-  },
-  emptyPlaceholderText: {
-    fontSize: 13,
-    color: theme.textMuted,
-    textAlign: "center",
-  },
-});

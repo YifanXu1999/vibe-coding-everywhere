@@ -1,0 +1,15 @@
+export const geminiTheme = {
+  beigeBg: "#ffffff",
+  cardBg: "#ffffff",
+  surfaceBg: "#f3f3f5",
+  borderColor: "rgba(0,0,0,0.1)",
+  textPrimary: "#030213",
+  textMuted: "#717182",
+  assistantBg: "#f3f3f5",
+  userBg: "#e9ebef",
+  accent: "#7c3aed",
+  accentLight: "#ede9fe",
+  success: "#15a362",
+  danger: "#d4183d",
+  shadow: "rgba(0, 0, 0, 0.08)",
+} as const;

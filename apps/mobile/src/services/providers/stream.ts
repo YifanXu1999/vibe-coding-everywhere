@@ -62,10 +62,14 @@ export function isAskUserQuestionPayload(data: unknown): boolean {
   return Array.isArray(input?.questions) && (input.questions as unknown[]).length > 0;
 }
 
-export function isClaudeStream(data: unknown): boolean {
+/** Check if data matches known AI stream event format (works for both Claude and Gemini). */
+export function isProviderStream(data: unknown): boolean {
   if (typeof data !== "object" || data === null) return false;
   const obj = data as Record<string, unknown>;
-  const types = ["system", "assistant", "result", "user", "input", "permission_request", "stream_event"];
+  const types = [
+    "system", "assistant", "result", "user", "input", "permission_request", "stream_event",
+    "init", "message", "tool_use", "tool_result",
+  ];
   return (
     types.includes(String(obj.type ?? "")) ||
     Array.isArray(obj.permission_denials) ||
@@ -73,12 +77,39 @@ export function isClaudeStream(data: unknown): boolean {
   );
 }
 
+/** @deprecated Use isProviderStream */
+export const isClaudeStream = isProviderStream;
+
 export function deniedToolToAllowedPattern(toolName: string | null | undefined): string | null {
   if (!toolName || typeof toolName !== "string") return null;
   const t = toolName.trim();
   if (t === "Bash") return "Bash(*)";
   if (["Write", "Edit", "Read"].includes(t)) return t;
   return t;
+}
+
+/**
+ * Known provider CLI system noise lines to suppress from chat display.
+ * These are startup/diagnostic messages from Gemini/Claude CLI that should not appear in the chat UI.
+ */
+const PROVIDER_NOISE_PATTERNS = [
+  /^Approval mode overridden/i,
+  /^Loaded cached credentials/i,
+  /^Project hooks disabled/i,
+  /^Hook registry initialized/i,
+  /^The current folder is not trusted/i,
+  /^To update your account/i,
+  /^For more details,?\s*please visit/i,
+  /^✓\s*(Model|Session|Sandbox)/i,
+  /^Using model:/i,
+];
+
+/** Returns true if the line is known CLI system noise that should be suppressed from chat display. */
+export function isProviderSystemNoise(line: string): boolean {
+  if (!line || typeof line !== "string") return false;
+  const trimmed = line.trim();
+  if (!trimmed) return false;
+  return PROVIDER_NOISE_PATTERNS.some((p) => p.test(trimmed));
 }
 
 export function getAllowedToolsFromDenials(denials: Array<{ tool_name?: string; tool?: string }>): string[] {

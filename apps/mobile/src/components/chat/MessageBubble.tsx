@@ -1,7 +1,7 @@
 import React, { useMemo, useRef, useEffect } from "react";
 import { View, Text, StyleSheet, Linking, Pressable, Alert, ScrollView } from "react-native";
 import Markdown from "react-native-markdown-display";
-import { theme } from "../../theme/index";
+import { useTheme } from "../../theme/index";
 import type { Message } from "../../services/socket/hooks";
 
 function getFileName(path: string): string {
@@ -63,10 +63,93 @@ interface MessageBubbleProps {
 }
 
 export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailBoxMaxHeight = 360, onRunBashCommand, onOpenUrl }: MessageBubbleProps) {
+  const theme = useTheme();
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
   const refs = message.codeReferences ?? [];
   const tailScrollRef = useRef<ScrollView>(null);
+  const markdownStyles = useMemo(
+    () => ({
+      body: { color: theme.textPrimary },
+      text: { fontSize: 15, lineHeight: 22, color: theme.textPrimary },
+      paragraph: { marginTop: 6, marginBottom: 6 },
+      heading1: { fontSize: 20 },
+      heading2: { fontSize: 18 },
+      heading3: { fontSize: 16 },
+      heading4: { fontSize: 15 },
+      heading5: { fontSize: 14 },
+      heading6: { fontSize: 13 },
+      link: { color: theme.accent, textDecorationLine: "underline" as const },
+      code_inline: { backgroundColor: "#f0ebe4", color: theme.textPrimary },
+      code_block: { backgroundColor: "#f0ebe4", color: theme.textPrimary },
+      fence: { backgroundColor: "#f0ebe4", color: theme.textPrimary },
+      blockquote: { backgroundColor: "#f5f0ea", borderColor: theme.borderColor },
+    }),
+    [theme]
+  );
+  const styles = useMemo(
+    () =>
+      StyleSheet.create({
+        row: { flexDirection: "row" as const, alignItems: "flex-start", gap: 14 },
+        rowUser: { flexDirection: "row" as const, justifyContent: "flex-end" },
+        bubble: {
+          paddingVertical: 16,
+          paddingHorizontal: 18,
+          borderRadius: 18,
+          borderWidth: 1,
+          borderColor: theme.borderColor,
+          maxWidth: "80%",
+          backgroundColor: theme.assistantBg,
+        },
+        bubbleUser: { backgroundColor: theme.userBg, borderColor: "#f0d8c6" },
+        bubbleSystem: { backgroundColor: "#fff4e4", borderStyle: "dashed" as const },
+        bubbleText: { fontSize: 15, lineHeight: 22, color: theme.textPrimary },
+        bubbleTextSystem: { fontSize: 13, color: theme.textMuted },
+        bubbleTextTerminated: { color: theme.textMuted, fontStyle: "italic" as const },
+        bubbleTextPlaceholder: { color: theme.textMuted, fontStyle: "italic" as const },
+        tailBoxScroll: { flexGrow: 0 },
+        tailBoxContent: { paddingBottom: 12 },
+        refPills: { flexDirection: "row" as const, flexWrap: "wrap" as const, gap: 8 },
+        refPillsWithContent: { marginTop: 10 },
+        refPill: {
+          flexDirection: "row" as const,
+          alignItems: "center",
+          alignSelf: "flex-start",
+          gap: 6,
+          paddingVertical: 6,
+          paddingHorizontal: 10,
+          borderRadius: 12,
+          backgroundColor: "#e8f0fe",
+        },
+        refPillIcon: { fontSize: 12, color: "#4078F2" },
+        refPillText: { fontSize: 13, color: theme.textPrimary, fontWeight: "500" as const },
+        bashCodeBlockWrapper: {
+          alignSelf: "stretch",
+          marginVertical: 4,
+          borderRadius: 8,
+          overflow: "hidden" as const,
+          backgroundColor: "#f0ebe4",
+          borderWidth: 1,
+          borderColor: theme.borderColor,
+        },
+        bashCodeBlockHeader: {
+          flexDirection: "row" as const,
+          alignItems: "center",
+          justifyContent: "flex-end",
+          paddingHorizontal: 10,
+          paddingVertical: 6,
+          borderBottomWidth: 1,
+          borderBottomColor: theme.borderColor,
+          backgroundColor: "#e8e2da",
+        },
+        bashCodeBlockHeaderSpacer: { flex: 1 },
+        bashRunButton: { paddingVertical: 4, paddingHorizontal: 12, borderRadius: 6, backgroundColor: theme.accent },
+        bashRunButtonPressed: { opacity: 0.85 },
+        bashRunButtonText: { fontSize: 13, fontWeight: "600" as const, color: "#fff" },
+        bashCodeBlock: { paddingHorizontal: 12, paddingVertical: 10 },
+      }),
+    [theme]
+  );
 
   useEffect(() => {
     if (showAsTailBox && message.content) {
@@ -216,138 +299,3 @@ export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailB
   );
 }
 
-const markdownStyles = {
-  body: { color: theme.textPrimary },
-  text: { fontSize: 15, lineHeight: 22, color: theme.textPrimary },
-  paragraph: { marginTop: 6, marginBottom: 6 },
-  heading1: { fontSize: 20 },
-  heading2: { fontSize: 18 },
-  heading3: { fontSize: 16 },
-  heading4: { fontSize: 15 },
-  heading5: { fontSize: 14 },
-  heading6: { fontSize: 13 },
-  link: { color: theme.accent, textDecorationLine: "underline" },
-  code_inline: { backgroundColor: "#f0ebe4", color: theme.textPrimary },
-  code_block: { backgroundColor: "#f0ebe4", color: theme.textPrimary },
-  fence: { backgroundColor: "#f0ebe4", color: theme.textPrimary },
-  blockquote: { backgroundColor: "#f5f0ea", borderColor: theme.borderColor },
-};
-
-const styles = StyleSheet.create({
-  row: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 14,
-  },
-  rowUser: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-  },
-  bubble: {
-    paddingVertical: 16,
-    paddingHorizontal: 18,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: theme.borderColor,
-    maxWidth: "80%",
-    backgroundColor: theme.assistantBg,
-  },
-  bubbleUser: {
-    backgroundColor: theme.userBg,
-    borderColor: "#f0d8c6",
-  },
-  bubbleSystem: {
-    backgroundColor: "#fff4e4",
-    borderStyle: "dashed",
-  },
-  bubbleText: {
-    fontSize: 15,
-    lineHeight: 22,
-    color: theme.textPrimary,
-  },
-  bubbleTextSystem: {
-    fontSize: 13,
-    color: theme.textMuted,
-  },
-  bubbleTextTerminated: {
-    color: theme.textMuted,
-    fontStyle: "italic",
-  },
-  bubbleTextPlaceholder: {
-    color: theme.textMuted,
-    fontStyle: "italic",
-  },
-  tailBoxScroll: {
-    flexGrow: 0,
-  },
-  tailBoxContent: {
-    paddingBottom: 12,
-  },
-  refPills: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  refPillsWithContent: {
-    marginTop: 10,
-  },
-  refPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    alignSelf: "flex-start",
-    gap: 6,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 12,
-    backgroundColor: "#e8f0fe",
-  },
-  refPillIcon: {
-    fontSize: 12,
-    color: "#4078F2",
-  },
-  refPillText: {
-    fontSize: 13,
-    color: theme.textPrimary,
-    fontWeight: "500",
-  },
-  bashCodeBlockWrapper: {
-    alignSelf: "stretch",
-    marginVertical: 4,
-    borderRadius: 8,
-    overflow: "hidden",
-    backgroundColor: "#f0ebe4",
-    borderWidth: 1,
-    borderColor: theme.borderColor,
-  },
-  bashCodeBlockHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "flex-end",
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.borderColor,
-    backgroundColor: "#e8e2da",
-  },
-  bashCodeBlockHeaderSpacer: {
-    flex: 1,
-  },
-  bashRunButton: {
-    paddingVertical: 4,
-    paddingHorizontal: 12,
-    borderRadius: 6,
-    backgroundColor: theme.accent,
-  },
-  bashRunButtonPressed: {
-    opacity: 0.85,
-  },
-  bashRunButtonText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#fff",
-  },
-  bashCodeBlock: {
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-});

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import {
   View,
   Text,
@@ -12,7 +12,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
-import { theme } from "../../theme/index";
+import { useTheme } from "../../theme/index";
 
 function normalizeUrl(input: string): string {
   const trimmed = input.trim();
@@ -46,6 +46,8 @@ export function PreviewWebViewModal({
   title = "Preview",
   onClose,
 }: PreviewWebViewModalProps) {
+  const theme = useTheme();
+  const styles = useMemo(() => createPreviewStyles(theme), [theme]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentUrl, setCurrentUrl] = useState(() => url?.trim() ?? "");
@@ -215,7 +217,8 @@ export function PreviewWebViewModal({
 
 const toolbarHeight = Platform.OS === "ios" ? 52 : 48;
 
-const styles = StyleSheet.create({
+function createPreviewStyles(theme: ReturnType<typeof useTheme>) {
+  return StyleSheet.create({
   safe: {
     flex: 1,
     backgroundColor: theme.surfaceBg,
@@ -334,4 +337,5 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontWeight: "600",
   },
-});
+  });
+}

@@ -7,7 +7,7 @@ Guide for deploying and running the application.
 ### Requirements
 
 - Node.js 18+
-- Claude Code CLI installed
+- At least one AI CLI installed: Claude Code CLI or Gemini CLI (`npm i -g @google/gemini-cli`)
 - (Optional) PM2 or similar for process management
 - (Optional) Nginx for reverse proxy
 
@@ -253,9 +253,9 @@ EOF
 export $(grep -v '^#' .env | xargs)
 ```
 
-### Claude Permissions
+### AI Provider Configuration
 
-Set appropriate permission mode:
+**Claude permissions:**
 
 ```bash
 # For trusted environments
@@ -263,6 +263,17 @@ DEFAULT_PERMISSION_MODE=bypassPermissions
 
 # For restrictive environments  
 DEFAULT_PERMISSION_MODE=acceptPermissions
+```
+
+**Provider selection and Gemini approval:**
+
+```bash
+# Use Claude
+DEFAULT_PROVIDER=claude
+
+# Use Gemini (default)
+DEFAULT_PROVIDER=gemini
+DEFAULT_GEMINI_APPROVAL_MODE=auto_edit   # or default, plan
 ```
 
 ## Monitoring
@@ -274,7 +285,8 @@ DEFAULT_PERMISSION_MODE=acceptPermissions
 pm2 logs claude-terminal
 
 # Or tail log files
-tail -f logs/claude-output-*.log
+tail -f logs/claude/claude-output-*.log
+tail -f logs/gemini/gemini-output-*.log
 ```
 
 ### Health Checks
@@ -302,7 +314,7 @@ pm2 plus
 
 ### What to Backup
 
-- Claude output logs (`logs/`)
+- AI output logs (`logs/claude/`, `logs/gemini/`)
 - Workspace files
 - Configuration files
 
@@ -334,8 +346,9 @@ lsof -i :3456
 # Check node version
 node --version
 
-# Check Claude installation
-which claude
+# Check AI CLI installation
+which claude && claude --version
+which gemini && gemini --version
 ```
 
 ### Mobile Can't Connect

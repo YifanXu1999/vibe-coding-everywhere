@@ -8,7 +8,9 @@ Guide for developers working on this project.
 
 - Node.js 18+ 
 - npm or yarn
-- Claude Code CLI installed and in PATH
+- At least one AI CLI installed and in PATH:
+  - Claude Code CLI
+  - Gemini CLI (`npm i -g @google/gemini-cli`)
 - (Optional) Xcode for iOS development
 - (Optional) Android Studio for Android development
 
@@ -22,8 +24,8 @@ cd vibe-coding-everywhere
 # Install dependencies
 npm install
 
-# Verify Claude is accessible
-claude --version
+# Verify AI CLI is accessible
+claude --version   # or: gemini --version
 ```
 
 ## Development Workflows
@@ -105,8 +107,8 @@ server/
 ├── config/       # Environment setup
 ├── routes/       # HTTP endpoints
 ├── socket/       # WebSocket handlers
-├── process/      # PTY management
-├── prompts/      # Prompt loading
+├── process/      # AI provider PTY (claude.js, gemini.js)
+├── prompts/      # Claude prompt loading
 └── utils/        # Shared utilities
 ```
 
@@ -123,7 +125,7 @@ apps/mobile/src/
 │   ├── socket/
 │   ├── server/
 │   ├── file/
-│   └── claude/
+│   └── providers/  # AI event handlers (claude/, gemini/)
 ├── core/         # Types & interfaces
 └── theme/        # Styling
 ```
@@ -167,9 +169,9 @@ socket.on("my-response", (response) => {
 });
 ```
 
-### Adding a Claude Event Handler
+### Adding an AI Provider Event Handler
 
-1. Add handler in `server/prompts/index.js` or `apps/mobile/src/services/claude/eventStrategies.ts`:
+1. Add handler in `apps/mobile/src/services/providers/<provider>/eventHandlers.ts`:
 
 ```typescript
 registry.set("my_event", (data, ctx) => {
@@ -213,9 +215,10 @@ import { MyComponent } from "./src/components/chat/MyComponent";
 # Enable verbose logging
 DEBUG=* npm start
 
-# Check Claude output logs
-ls logs/
-cat logs/claude-output-*.log
+# Check AI output logs
+ls logs/claude/ logs/gemini/
+cat logs/claude/claude-output-*.log
+cat logs/gemini/gemini-output-*.log
 ```
 
 ### Mobile Debugging
@@ -274,8 +277,10 @@ PORT=3457 npm start
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | `3456` | Server port |
-| `WORKSPACE` | Server dir | Claude working directory |
-| `DEFAULT_PERMISSION_MODE` | `bypassPermissions` | Claude permissions |
+| `WORKSPACE` | Server dir | AI CLI working directory |
+| `DEFAULT_PROVIDER` | `gemini` | AI provider: `claude` or `gemini` |
+| `DEFAULT_PERMISSION_MODE` | `bypassPermissions` | Claude permission mode |
+| `DEFAULT_GEMINI_APPROVAL_MODE` | `auto_edit` | Gemini approval mode |
 | `SIDEBAR_REFRESH_INTERVAL_MS` | `3000` | File tree refresh |
 
 ### Mobile
@@ -353,7 +358,7 @@ npx expo build:android
 - [ ] Web client loads and connects
 - [ ] Mobile app connects (local)
 - [ ] Mobile app connects (Tailscale)
-- [ ] Claude session starts
+- [ ] AI session starts (Claude or Gemini)
 - [ ] Messages display correctly
 - [ ] File tree loads
 - [ ] File viewer opens files
@@ -387,9 +392,9 @@ npx expo build:android
 npm run postinstall
 ```
 
-**Error: Claude not found**
+**Error: AI CLI not found**
 
-Install Claude Code CLI from Anthropic.
+Install Claude Code CLI or Gemini CLI (`npm i -g @google/gemini-cli`).
 
 ### Mobile Issues
 

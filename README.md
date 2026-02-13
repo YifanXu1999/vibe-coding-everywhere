@@ -1,6 +1,6 @@
-# Claude Terminal with Mobile Support
+# Vibe Coding Everywhere
 
-Web and mobile clients that connect to a local Claude Code CLI via Socket.IO. The server spawns `claude` in a PTY and streams output in real time.
+Web and mobile clients that connect to a local AI coding assistant (Claude Code CLI or Gemini CLI) via Socket.IO. The server spawns the selected CLI in a PTY and streams output in real time.
 
 ## Table of Contents
 
@@ -16,9 +16,9 @@ Web and mobile clients that connect to a local Claude Code CLI via Socket.IO. Th
 
 ## Overview
 
-This project provides a web-based and mobile interface for interacting with Claude Code CLI. It consists of:
+This project provides a web-based and mobile interface for interacting with AI coding assistants. It consists of:
 
-- **Server**: Express + Socket.IO + node-pty that spawns the Claude CLI
+- **Server**: Express + Socket.IO + node-pty that spawns Claude CLI or Gemini CLI
 - **Web Client**: HTML/JS chat UI served at the root URL
 - **Mobile Client**: Expo React Native app for iOS/Android devices
 
@@ -29,7 +29,9 @@ See [Quick Start Guide](docs/QUICKSTART.md) for the fastest setup.
 ### Prerequisites
 
 - Node.js (v18+)
-- [Claude Code CLI](https://docs.anthropic.com/claude/docs/claude-code) installed and in PATH
+- At least one AI CLI installed and in PATH:
+  - [Claude Code CLI](https://docs.anthropic.com/claude/docs/claude-code)
+  - [Gemini CLI](https://github.com/google/gemini-cli) (`npm i -g @google/gemini-cli`)
 - (Optional) [Tailscale](https://tailscale.com) for mobile access
 
 ### Installation
@@ -71,8 +73,8 @@ See [Mobile Setup](#mobile-setup) below.
 └─────────────────┘                    └────────┬─────────┘
                                                 │
 ┌─────────────────┐     Socket.IO      ┌───────▼─────────┐
-│  Mobile Client  │ ◄────────────────► │   Claude CLI    │
-│  (iOS/Android)  │                    │   (PTY process) │
+│  Mobile Client  │ ◄────────────────► │  AI CLI (PTY)   │
+│  (iOS/Android)  │                    │  Claude / Gemini│
 └─────────────────┘                    └─────────────────┘
 ```
 
@@ -84,8 +86,10 @@ The server is organized into modular components:
 server/
 ├── config/         # Environment configuration
 ├── utils/          # Utility functions (ANSI stripping, workspace tree)
-├── prompts/        # System prompt loading
-├── process/        # Claude PTY process management
+├── prompts/        # System prompt loading (Claude)
+├── process/        # AI provider PTY management (Claude/Gemini)
+│   ├── claude.js   # Claude CLI config
+│   └── gemini.js   # Gemini CLI config
 ├── routes/         # Express API routes
 └── socket/         # Socket.IO event handlers
 ```
@@ -106,7 +110,7 @@ apps/mobile/src/
 │   ├── socket/     # Socket connection hook
 │   ├── server/     # Server configuration
 │   ├── file/       # File operations
-│   └── claude/     # Claude event handling
+│   └── providers/  # AI provider event handling (Claude, Gemini)
 └── theme/          # Styling constants
 ```
 
@@ -125,8 +129,10 @@ apps/mobile/src/
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `PORT` | Server port | `3456` |
-| `WORKSPACE` / `WORKSPACE_CWD` | Claude working directory | Server directory |
+| `WORKSPACE` / `WORKSPACE_CWD` | AI CLI working directory | Server directory |
+| `DEFAULT_PROVIDER` | AI provider: `claude` or `gemini` | `gemini` |
 | `DEFAULT_PERMISSION_MODE` | Claude permission mode | `bypassPermissions` |
+| `DEFAULT_GEMINI_APPROVAL_MODE` | Gemini approval mode: `default`, `auto_edit`, `plan` | `auto_edit` |
 | `SIDEBAR_REFRESH_INTERVAL_MS` | File tree refresh interval | `3000` |
 
 ### Command Line
@@ -192,7 +198,7 @@ node server.js --workspace /path/to/project
 
 | Event | Payload | Description |
 |-------|---------|-------------|
-| `submit-prompt` | `{ prompt, permissionMode?, allowedTools? }` | Start Claude session |
+| `submit-prompt` | `{ prompt, provider?, permissionMode?, allowedTools?, approvalMode? }` | Start AI session (Claude or Gemini) |
 | `input` | `string` | Send input to Claude |
 | `resize` | `{ cols, rows }` | Resize PTY |
 | `claude-terminate` | — | Kill Claude process |
@@ -204,8 +210,8 @@ node server.js --workspace /path/to/project
 
 | Event | Payload | Description |
 |-------|---------|-------------|
-| `output` | `string` | Claude output stream |
-| `claude-started` | `{ permissionMode, allowedTools, useContinue }` | Session started |
+| `output` | `string` | AI output stream |
+| `claude-started` | `{ provider, permissionMode, allowedTools, useContinue, approvalMode? }` | Session started |
 | `exit` | `{ exitCode }` | Session ended |
 | `run-render-started` | `{ terminalId, pid? }` | Terminal created |
 | `run-render-stdout` | `{ terminalId, chunk }` | Terminal stdout |
@@ -243,10 +249,15 @@ npm run icons:convert  # Convert icons
 
 ### Adding Features
 
-**New Claude Event Handler:**
+**New AI Provider:**
 
-1. Add handler in `server/socket/handlers/`
-2. Register in `server/socket/index.js`
+1. Add config in `server/process/<provider>.js`
+2. Register in `server/process/index.js` (`PROVIDER_CONFIG`)
+
+**New AI Event Handler (mobile):**
+
+1. Add handler in `apps/mobile/src/services/providers/<provider>/`
+2. Register in provider event dispatcher
 
 **New API Route:**
 
@@ -267,13 +278,17 @@ npm run icons:convert  # Convert icons
 - Check firewall settings
 - For Tailscale: verify both devices show in `tailscale status`
 
-### Claude not found
+### AI CLI not found
 
-Ensure `claude` CLI is installed and in PATH:
+Ensure at least one CLI is installed and in PATH:
 
 ```bash
-which claude
-claude --version
+# Claude
+which claude && claude --version
+
+# Gemini
+which gemini && gemini --version
+# Install: npm i -g @google/gemini-cli
 ```
 
 ### Port already in use

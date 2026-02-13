@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { View, Text, TextInput, StyleSheet, TouchableOpacity, Platform } from "react-native";
-import { theme } from "../../theme/index";
+import { useTheme } from "../../theme/index";
 import type { PendingRender } from "../../services/socket/hooks";
 
 interface RenderPreviewBarProps {
   pendingRender: PendingRender | null;
+  /** Whether user has already run the command for the current render suggestion. */
+  hasRunCommandForCurrentRender?: boolean;
   onRunRender: (command: string, url: string) => void;
   /** Open preview URL in-app (WebView modal) — integrated with chat. */
   onOpenPreviewInApp: (url: string) => void;
@@ -12,11 +14,72 @@ interface RenderPreviewBarProps {
 
 export function RenderPreviewBar({
   pendingRender,
+  hasRunCommandForCurrentRender,
   onRunRender,
   onOpenPreviewInApp,
 }: RenderPreviewBarProps) {
+  const theme = useTheme();
   const [editedCommand, setEditedCommand] = useState("");
   const [editedUrl, setEditedUrl] = useState("");
+  const styles = useMemo(
+    () =>
+      StyleSheet.create({
+        container: {
+          width: "100%",
+          borderWidth: 1,
+          borderColor: theme.accent,
+          backgroundColor: theme.accentLight,
+          borderRadius: 14,
+          padding: 16,
+        },
+        content: { gap: 6 },
+        label: { fontSize: 12, fontWeight: "600" as const, color: theme.textMuted },
+        commandInput: {
+          fontSize: 13,
+          fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+          backgroundColor: "rgba(255,255,255,0.9)",
+          paddingVertical: 8,
+          paddingHorizontal: 10,
+          borderRadius: 8,
+          borderWidth: 1,
+          borderColor: theme.borderColor,
+          color: theme.textPrimary,
+          minHeight: 40,
+          maxHeight: 100,
+        },
+        urlInput: {
+          fontSize: 13,
+          fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+          backgroundColor: "rgba(255,255,255,0.9)",
+          paddingVertical: 8,
+          paddingHorizontal: 10,
+          borderRadius: 8,
+          borderWidth: 1,
+          borderColor: theme.borderColor,
+          color: theme.textPrimary,
+        },
+        buttons: { flexDirection: "row" as const, gap: 10, marginTop: 10, flexWrap: "wrap" as const },
+        btn: {
+          paddingVertical: 8,
+          paddingHorizontal: 18,
+          borderRadius: 999,
+          borderWidth: 1,
+          borderColor: theme.accent,
+          backgroundColor: theme.accent,
+        },
+        btnText: { color: "#fff", fontWeight: "500" as const, fontSize: 14 },
+        btnSecondary: {
+          paddingVertical: 8,
+          paddingHorizontal: 18,
+          borderRadius: 999,
+          borderWidth: 1,
+          borderColor: theme.accent,
+          backgroundColor: "transparent",
+        },
+        btnSecondaryText: { color: theme.accent, fontWeight: "500" as const, fontSize: 14 },
+      }),
+    [theme]
+  );
 
   useEffect(() => {
     if (pendingRender) {
@@ -72,77 +135,3 @@ export function RenderPreviewBar({
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    width: "100%",
-    borderWidth: 1,
-    borderColor: theme.accent,
-    backgroundColor: theme.accentLight,
-    borderRadius: 14,
-    padding: 16,
-  },
-  content: {
-    gap: 6,
-  },
-  label: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: theme.textMuted,
-  },
-  commandInput: {
-    fontSize: 13,
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-    backgroundColor: "rgba(255,255,255,0.9)",
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: theme.borderColor,
-    color: theme.textPrimary,
-    minHeight: 40,
-    maxHeight: 100,
-  },
-  urlInput: {
-    fontSize: 13,
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-    backgroundColor: "rgba(255,255,255,0.9)",
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: theme.borderColor,
-    color: theme.textPrimary,
-  },
-  buttons: {
-    flexDirection: "row",
-    gap: 10,
-    marginTop: 10,
-    flexWrap: "wrap",
-  },
-  btn: {
-    paddingVertical: 8,
-    paddingHorizontal: 18,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: theme.accent,
-    backgroundColor: theme.accent,
-  },
-  btnText: {
-    color: "#fff",
-    fontWeight: "500",
-    fontSize: 14,
-  },
-  btnSecondary: {
-    paddingVertical: 8,
-    paddingHorizontal: 18,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: theme.accent,
-    backgroundColor: "transparent",
-  },
-  btnSecondaryText: {
-    color: theme.accent,
-    fontWeight: "500",
-    fontSize: 14,
-  },
-});

@@ -5,8 +5,13 @@ export {
 } from "../services/server/config";
 export { createWorkspaceFileService } from "../services/file/service";
 export {
+  createEventDispatcher,
   createClaudeEventDispatcher,
-  type ClaudeEventContext,
-  type ClaudeEventHandler,
-} from "../services/claude/eventStrategies";
-export { getTerminalInputState, type TerminalInputState } from "../services/claude/terminalInput";
+} from "../services/providers/eventDispatcher";
+export type {
+  EventContext,
+  EventHandler,
+  ClaudeEventContext,
+  ClaudeEventHandler,
+} from "../services/providers/types";
+export { getTerminalInputState, type TerminalInputState } from "../services/providers/terminalInput";

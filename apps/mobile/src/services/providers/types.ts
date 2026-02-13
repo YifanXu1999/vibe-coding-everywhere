@@ -1,0 +1,84 @@
+import type { Message, PermissionDenial, PendingAskUserQuestion } from "../../core/types";
+
+/**
+ * Context passed to AI provider event handlers (Strategy pattern).
+ * New event types can be supported by registering a handler without modifying the dispatcher (Open-Closed).
+ */
+/** Tool use record for matching tool_result to tool_use (e.g. Gemini policy_violation). */
+export interface ToolUseRecord {
+  tool_name: string;
+  tool_input?: Record<string, unknown>;
+}
+
+export interface EventContext {
+  setPermissionDenials: (denials: PermissionDenial[] | null) => void;
+  setPendingRender: (value: { command: string; url: string } | null) => void;
+  setModelName: (name: string) => void;
+  setWaitingForUserInput: (value: boolean) => void;
+  setPendingAskQuestion: (value: PendingAskUserQuestion | null) => void;
+  addMessage: (role: Message["role"], content: string, codeReferences?: { path: string; startLine: number; endLine: number }[]) => string;
+  appendAssistantText: (chunk: string) => void;
+  /** Current assistant message content (for delta-only append to avoid full-text display when stream ends). */
+  getCurrentAssistantContent: () => string;
+  deduplicateDenials: (denials: PermissionDenial[]) => PermissionDenial[];
+  /** Record tool_use by id for later tool_result (e.g. policy_violation). Optional. */
+  recordToolUse?: (id: string, data: ToolUseRecord) => void;
+  /** Get and remove tool_use record by id. Optional. */
+  getAndClearToolUse?: (id: string) => ToolUseRecord | null;
+  /** Add a single permission denial (merge with existing). Optional. */
+  addPermissionDenial?: (denial: PermissionDenial) => void;
+}
+
+export type EventHandler = (data: Record<string, unknown>, ctx: EventContext) => void;
+
+/** Basename for display (no Node path dependency). */
+export function basename(filePath: string): string {
+  const s = String(filePath).replace(/\\/g, "/").trim();
+  const parts = s.split("/");
+  return parts[parts.length - 1] ?? s;
+}
+
+/** Format one tool_use block as a short human-readable markdown line for the assistant bubble. */
+export function formatToolUseForDisplay(name: string, input: unknown): string {
+  const obj = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const filePath = obj.file_path ?? obj.path;
+  const file = filePath != null ? basename(String(filePath)) : null;
+
+  // Normalize Gemini CLI tool names to display form
+  const n = name === "ask_user" ? "AskUserQuestion" : name === "write_file" ? "Write" : name === "run_shell_command" ? "Bash" : name;
+
+  switch (n) {
+    case "Read":
+      return file ? `📖 Reading \`${file}\`` : "📖 Reading file";
+    case "Edit":
+      return file ? `✏️ Editing \`${file}\`` : "✏️ Editing file";
+    case "Write":
+      return file ? `📝 Writing \`${file}\`` : "📝 Writing file";
+    case "Bash": {
+      const cmd = obj.command != null ? String(obj.command).trim() : "";
+      const displayCmd = cmd.length > 120 ? cmd.slice(0, 117) + "..." : cmd;
+      return displayCmd ? `🖥 Running command: \`${displayCmd}\`` : "🖥 Running command";
+    }
+    case "TodoWrite":
+      return "📋 Updating tasks";
+    case "AskUserQuestion": {
+      const questions = obj.questions as Array<{ question?: string; header?: string; options?: Array<{ label?: string }> }> | undefined;
+      const q = Array.isArray(questions) && questions[0] ? questions[0] : null;
+      const header = q?.header ? `${q.header}: ` : "";
+      const question = (q?.question ?? "Question").slice(0, 80);
+      const opts = q?.options?.map((o) => o.label ?? "").filter(Boolean).slice(0, 4).join(", ");
+      return opts ? `❓ **${header}**${question} — _${opts}_` : `❓ **${header}**${question}`;
+    }
+    case "Grep":
+    case "Glob":
+      return file ? `🔍 \`${n}\` in \`${file}\`` : `🔍 ${n}`;
+    default:
+      return file ? `**${n}** \`${file}\`` : `**${n}**`;
+  }
+}
+
+// Backward compatibility aliases
+/** @deprecated Use EventContext */
+export type ClaudeEventContext = EventContext;
+/** @deprecated Use EventHandler */
+export type ClaudeEventHandler = EventHandler;

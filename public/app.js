@@ -16,6 +16,9 @@ const sidebarTree = document.getElementById("sidebar-tree");
 const sidebarWorkspaceName = document.getElementById("sidebar-workspace-name");
 const sidebarToggle = document.getElementById("sidebar-toggle");
 
+/** Current AI provider ("claude" | "gemini"). Sent with each submit-prompt. */
+let currentProvider = "gemini";
+
 const socket = io();
 
 /* --- Sidebar (VSCode-style file explorer) --- */
@@ -196,7 +199,7 @@ function createMessageElement(role, content, meta = {}) {
 
   const avatar = document.createElement("div");
   avatar.className = "avatar";
-  avatar.textContent = role === "assistant" ? "C" : role === "user" ? "You" : "!";
+  avatar.textContent = role === "assistant" ? (currentProvider === "gemini" ? "G" : "C") : role === "user" ? "You" : "!";
 
   const bubble = document.createElement("div");
   bubble.className = "bubble";
@@ -390,6 +393,7 @@ function showPermissionDenialBanner(denials) {
       prompt: "Permissions granted, try again.",
       allowedTools,
       permissionMode,
+      provider: currentProvider,
       retryAfterPermissionDenial: true,
     });
   });
@@ -398,7 +402,7 @@ function showPermissionDenialBanner(denials) {
 
 function isClaudeStream(data) {
   if (typeof data !== "object" || data === null) return false;
-  const types = ["system", "assistant", "result", "user", "input", "permission_request"];
+  const types = ["system", "assistant", "result", "user", "input", "permission_request", "init", "message"];
   return types.includes(data.type) || Array.isArray(data.permission_denials);
 }
 
@@ -408,7 +412,8 @@ function handleClaudeEvent(data) {
   }
 
   switch (data.type) {
-    case "system": {
+    case "system":
+    case "init": {
       const info = [];
       if (data.session_id) info.push(`Session ID: ${data.session_id}`);
       if (data.model) info.push(`Model: ${data.model}`);
@@ -426,6 +431,17 @@ function handleClaudeEvent(data) {
         if (content.type === "text") {
           parts.push(content.text);
         }
+      }
+      appendAssistantText(parts.join(""));
+      break;
+    }
+    case "message": {
+      if (data.role !== "model") break;
+      const msg = data.message ?? data;
+      const contents = msg?.content ?? msg?.parts ?? [];
+      const parts = [];
+      for (const c of contents) {
+        if (c.type === "text") parts.push(c.text ?? "");
       }
       appendAssistantText(parts.join(""));
       break;
@@ -540,7 +556,7 @@ function submitPrompt() {
   if (claudeRunning) return;
 
   const permissionMode = permissionModeSelect?.value || undefined;
-  socket.emit("submit-prompt", { prompt, permissionMode });
+  socket.emit("submit-prompt", { prompt, permissionMode, provider: currentProvider });
   addUserMessage(prompt);
   promptInput.value = "";
 }
@@ -593,3 +609,23 @@ refreshInputState();
 setTypingIndicator(false);
 
 initSidebar();
+
+function initProviderSelector() {
+  document.body.classList.add(currentProvider === "gemini" ? "provider-gemini" : "provider-claude");
+  if (promptInput) promptInput.placeholder = currentProvider === "gemini" ? "Ask Gemini" : DEFAULT_PLACEHOLDER;
+  const container = permissionModeSelect?.parentNode;
+  if (!container) return;
+  const wrap = document.createElement("span");
+  wrap.style.marginRight = "8px";
+  wrap.innerHTML = '<label>Provider: <select id="provider-select"><option value="claude">Claude</option><option value="gemini">Gemini</option></select></label>';
+  const sel = wrap.querySelector("#provider-select");
+  sel.value = currentProvider;
+  container.insertBefore(wrap, permissionModeSelect);
+  sel.addEventListener("change", () => {
+    currentProvider = sel.value;
+    document.body.classList.remove("provider-claude", "provider-gemini");
+    document.body.classList.add(currentProvider === "gemini" ? "provider-gemini" : "provider-claude");
+    if (promptInput) promptInput.placeholder = currentProvider === "gemini" ? "Ask Gemini" : DEFAULT_PLACEHOLDER;
+  });
+}
+initProviderSelector();

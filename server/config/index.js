@@ -67,35 +67,51 @@ export const SIDEBAR_REFRESH_INTERVAL_MS = parseInt(process.env.SIDEBAR_REFRESH_
 // Default Claude permission mode (bypassPermissions, acceptPermissions, etc.)
 export const DEFAULT_PERMISSION_MODE = process.env.DEFAULT_PERMISSION_MODE || "bypassPermissions";
 
+// AI provider: "claude" or "gemini"
+export const DEFAULT_PROVIDER = process.env.DEFAULT_PROVIDER || "gemini";
+
+// Gemini CLI approval mode (default, auto_edit, plan)
+export const DEFAULT_GEMINI_APPROVAL_MODE = process.env.DEFAULT_GEMINI_APPROVAL_MODE || "auto_edit";
+
 /**
- * Log directory for Claude output.
+ * Log directory for AI provider output.
  * Uses CLAUDE_OUTPUT_LOG env var if set, otherwise defaults to <project-root>/logs
  */
-const CLAUDE_LOG_DIR = process.env.CLAUDE_OUTPUT_LOG
+const AI_LOG_DIR = process.env.CLAUDE_OUTPUT_LOG
   ? path.resolve(process.env.CLAUDE_OUTPUT_LOG)
   : path.join(projectRoot, "logs");
 
 /**
- * Generate a unique log file path with timestamp.
- * Creates a new log file for each server restart.
- * @returns {string} Path to log file
+ * Resolve the log directory, creating it if necessary.
+ * @returns {string} Absolute path to log directory
  */
-function getClaudeLogPath() {
+function resolveLogDir() {
   let dir = path.join(projectRoot, "logs");
   try {
-    const stat = fs.statSync(CLAUDE_LOG_DIR);
-    dir = stat.isDirectory() ? CLAUDE_LOG_DIR : path.dirname(CLAUDE_LOG_DIR);
+    const stat = fs.statSync(AI_LOG_DIR);
+    dir = stat.isDirectory() ? AI_LOG_DIR : path.dirname(AI_LOG_DIR);
   } catch {
-    // If log dir doesn't exist, use default logs directory
-    dir = path.isAbsolute(CLAUDE_LOG_DIR) ? path.dirname(CLAUDE_LOG_DIR) : path.join(projectRoot, "logs");
+    dir = path.isAbsolute(AI_LOG_DIR) ? path.dirname(AI_LOG_DIR) : path.join(projectRoot, "logs");
   }
-  // Generate timestamp for unique filename (YYYY-MM-DDTHH-MM-SS)
-  const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  return path.join(dir, `claude-output-${ts}.log`);
+  return dir;
 }
 
-/** Path to write Claude output log. One file per server run, with startup timestamp. */
-export const CLAUDE_OUTPUT_LOG = getClaudeLogPath();
+// Server-start timestamp shared by all log files in this run (YYYY-MM-DDTHH-MM-SS)
+const LOG_TIMESTAMP = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+
+/**
+ * Generate a provider-specific log file path.
+ * Each provider (claude/gemini) gets its own log file per server run.
+ * @param {string} provider - "claude" or "gemini"
+ * @returns {string} Path to provider-specific log file
+ */
+export function getProviderLogPath(provider = "claude") {
+  const dir = path.join(resolveLogDir(), provider);
+  return path.join(dir, `${provider}-output-${LOG_TIMESTAMP}.log`);
+}
+
+/** @deprecated Use getProviderLogPath(provider) instead. Kept for backward compatibility. */
+export const CLAUDE_OUTPUT_LOG = getProviderLogPath("claude");
 
 /** Directory for system prompt files (prompts/). Loaded and sent to Claude on each session. */
 export const PROMPTS_DIR = path.join(projectRoot, "prompts");

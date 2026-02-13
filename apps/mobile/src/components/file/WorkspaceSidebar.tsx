@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
   View,
   Text,
@@ -11,7 +11,7 @@ import {
   useWindowDimensions,
 } from "react-native";
 import { Image } from "expo-image";
-import { theme } from "../../theme/index";
+import { useTheme } from "../../theme/index";
 import { getDefaultServerConfig } from "../../core";
 
 export type TreeItem = {
@@ -60,6 +60,7 @@ const SIDE_MARGIN = 12;
 const RESERVED_BOTTOM = 100;
 
 export function WorkspaceSidebar({ visible, embedded, onClose, onFileSelect }: WorkspaceSidebarProps) {
+  const theme = useTheme();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const [data, setData] = useState<WorkspaceData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -210,6 +211,8 @@ export function WorkspaceSidebar({ visible, embedded, onClose, onFileSelect }: W
     [expandedPaths, toggleFolder, getFileColor, handleFilePress]
   );
 
+  const styles = useMemo(() => createWorkspaceSidebarStyles(theme), [theme]);
+
   const overlayContent = (
     <View style={[styles.overlay, embedded && styles.overlayEmbedded]}>
       <TouchableOpacity
@@ -270,7 +273,8 @@ export function WorkspaceSidebar({ visible, embedded, onClose, onFileSelect }: W
   );
 }
 
-const styles = StyleSheet.create({
+function createWorkspaceSidebarStyles(theme: ReturnType<typeof useTheme>) {
+  return StyleSheet.create({
   overlay: {
     flex: 1,
   },
@@ -403,3 +407,4 @@ const styles = StyleSheet.create({
     marginLeft: 0,
   },
 });
+}

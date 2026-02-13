@@ -16,10 +16,11 @@ import {
   filterBashNoise,
   stripAnsi,
   stripTrailingIncompleteTag,
-  isClaudeStream,
+  isProviderStream,
   isAskUserQuestionPayload,
   getAllowedToolsFromDenials,
-} from "../claude/stream";
+  isProviderSystemNoise,
+} from "../providers/stream";
 import type {
   Message,
   CodeReference,
@@ -31,7 +32,9 @@ import type {
   IServerConfig,
 } from "../../core/types";
 import { getDefaultServerConfig } from "../server/config";
-import { createClaudeEventDispatcher } from "../claude/eventStrategies";
+import { createEventDispatcher } from "../providers/eventDispatcher";
+import type { Provider } from "../../theme/index";
+import type { CodeRefPayload } from "../../components/file/FileViewerModal";
 
 // Re-export types for consumers that import from useSocket
 export type { Message, CodeReference, PendingRender, PermissionDenial, PendingAskUserQuestion, LastRunOptions, TerminalState };
@@ -57,6 +60,8 @@ function toWorkspaceRelativePath(filePath: string, workspaceRoot: string | null)
 export interface UseSocketOptions {
   /** Injected server config (base URL). Defaults to env-based config. */
   serverConfig?: IServerConfig;
+  /** AI provider for submit-prompt ("claude" | "gemini"). */
+  provider?: Provider;
 }
 
 /**
@@ -69,6 +74,7 @@ export function useSocket(options: UseSocketOptions = {}) {
   // Server configuration - can be injected for testing
   const serverConfig = options.serverConfig ?? getDefaultServerConfig();
   const serverUrl = serverConfig.getBaseUrl();
+  const provider = options.provider ?? "gemini";
 
   // ===== Connection State =====
   const [connected, setConnected] = useState(false);
@@ -123,6 +129,7 @@ export function useSocket(options: UseSocketOptions = {}) {
   const pendingCommandAfterNewTerminalRef = useRef<string | null>(null);
   const pendingRenderKeyRef = useRef<string>("");
   const renderTerminalIdRef = useRef<string | null>(null);
+  const toolUseByIdRef = useRef<Map<string, { tool_name: string; tool_input?: Record<string, unknown> }>>(new Map());
 
   /**
    * Add a new message to the chat.
@@ -212,6 +219,24 @@ export function useSocket(options: UseSocketOptions = {}) {
     });
   }, []);
 
+  const recordToolUse = useCallback((id: string, data: { tool_name: string; tool_input?: Record<string, unknown> }) => {
+    toolUseByIdRef.current.set(id, data);
+  }, []);
+
+  const getAndClearToolUse = useCallback((id: string) => {
+    const m = toolUseByIdRef.current;
+    const v = m.get(id);
+    m.delete(id);
+    return v ?? null;
+  }, []);
+
+  const addPermissionDenial = useCallback(
+    (denial: PermissionDenial) => {
+      setPermissionDenials((prev) => deduplicateDenials([...(prev ?? []), denial]));
+    },
+    [deduplicateDenials]
+  );
+
   // ===== Socket.IO Connection Setup =====
   useEffect(() => {
     // Initialize Socket.IO connection
@@ -251,7 +276,7 @@ export function useSocket(options: UseSocketOptions = {}) {
       });
     });
 
-    // Main output handler - receives all Claude output
+    // Main output handler - receives all provider (Claude/Gemini) output
     socket.on("output", (data: string) => {
       outputBufferRef.current += data;
       const lines = outputBufferRef.current.split("\n");
@@ -261,12 +286,19 @@ export function useSocket(options: UseSocketOptions = {}) {
         const trimmed = line.trim();
         if (!trimmed) continue;
         
-        // Try to parse as JSON (Claude stream format)
+        // Strip ANSI escape codes before parsing (PTY may wrap JSON in escape sequences)
+        const clean = stripAnsi(trimmed);
+        if (!clean) continue;
+
+        // Filter known provider CLI system noise (Gemini startup messages, etc.)
+        if (isProviderSystemNoise(clean)) continue;
+        
+        // Try to parse as JSON (provider stream format)
         try {
-          const parsed = JSON.parse(trimmed);
-          if (isClaudeStream(parsed)) {
-            // Handle Claude stream events via dispatcher
-            const dispatcher = createClaudeEventDispatcher({
+          const parsed = JSON.parse(clean);
+          if (isProviderStream(parsed)) {
+            // Handle AI stream events via dispatcher (Claude/Gemini)
+            const dispatcher = createEventDispatcher({
               setPermissionDenials: (d) => setPermissionDenials(d ? deduplicateDenials(d) : null),
               setPendingRender,
               setModelName,
@@ -276,14 +308,17 @@ export function useSocket(options: UseSocketOptions = {}) {
               appendAssistantText,
               getCurrentAssistantContent: () => currentAssistantContentRef.current,
               deduplicateDenials,
+              recordToolUse,
+              getAndClearToolUse,
+              addPermissionDenial,
             });
             dispatcher(parsed);
           } else {
-            appendAssistantText(line + "\n");
+            appendAssistantText(clean + "\n");
           }
         } catch {
           // Not JSON - treat as plain text output
-          appendAssistantText(line + "\n");
+          appendAssistantText(clean + "\n");
         }
       }
     });
@@ -368,7 +403,7 @@ export function useSocket(options: UseSocketOptions = {}) {
     return () => {
       socket.disconnect();
     };
-  }, [serverUrl]);
+  }, [serverUrl, recordToolUse, getAndClearToolUse, addPermissionDenial, deduplicateDenials]);
 
   // ===== Action Handlers =====
 
@@ -387,7 +422,7 @@ export function useSocket(options: UseSocketOptions = {}) {
       let fullPrompt = prompt;
       if (codeRefs && codeRefs.length > 0) {
         const refsText = codeRefs
-          .map((ref) => `File: ${ref.path}\n\`\`\`\n${ref.content}\n\`\`\``)
+          .map((ref) => `File: ${ref.path}\n\`\`\`\n${ref.snippet}\n\`\`\``)
           .join("\n\n");
         fullPrompt = `${refsText}\n\n${prompt}`;
       }
@@ -396,6 +431,7 @@ export function useSocket(options: UseSocketOptions = {}) {
         prompt: fullPrompt,
         permissionMode,
         allowedTools,
+        provider,
       });
       
       // Add user message to chat
@@ -407,7 +443,7 @@ export function useSocket(options: UseSocketOptions = {}) {
       renderTerminalIdRef.current = null;
       setLastSessionTerminated(false);
     },
-    [addMessage]
+    [addMessage, provider]
   );
 
   /**
@@ -454,11 +490,12 @@ export function useSocket(options: UseSocketOptions = {}) {
         permissionMode: permissionMode ?? lastRunOptions.permissionMode ?? undefined,
         allowedTools,
         replaceRunning: true,
+        provider,
       });
       
       setPermissionDenials(null);
     },
-    [permissionDenials, lastRunOptions]
+    [permissionDenials, lastRunOptions, provider]
   );
 
   /**

@@ -5,7 +5,9 @@ Get up and running in 5 minutes.
 ## Prerequisites
 
 - Node.js 18+
-- Claude Code CLI installed (`claude --version` to check)
+- At least one AI CLI installed:
+  - **Claude Code CLI** (`claude --version` to check)
+  - **Gemini CLI** (`npm i -g @google/gemini-cli`, then `gemini --version`)
 - (Optional) Tailscale account for mobile access
 
 ## 1. Install
@@ -28,7 +30,7 @@ Server runs at `http://localhost:3456`.
 
 Visit http://localhost:3456 in your browser.
 
-Start chatting with Claude!
+Start chatting with Claude or Gemini! The default provider is configurable via `DEFAULT_PROVIDER` (env: `claude` or `gemini`).
 
 ## Mobile Setup (Optional)
 
@@ -79,11 +81,14 @@ PORT=3457 npm start
 
 ## Troubleshooting
 
-**Claude not found?**
+**AI CLI not found?**
 ```bash
-# Install Claude Code CLI from Anthropic
-# Then verify:
-which claude
+# Claude: install from Anthropic
+which claude && claude --version
+
+# Gemini: install globally
+npm i -g @google/gemini-cli
+which gemini && gemini --version
 ```
 
 **Port in use?**

@@ -1,12 +1,21 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useMemo } from "react";
 import { View, StyleSheet, Animated } from "react-native";
-import { theme } from "../../theme/index";
+import { useTheme } from "../../theme/index";
 
 interface TypingIndicatorProps {
   visible: boolean;
 }
 
 export function TypingIndicator({ visible }: TypingIndicatorProps) {
+  const theme = useTheme();
+  const styles = useMemo(
+    () =>
+      StyleSheet.create({
+        container: { flexDirection: "row" as const, gap: 6, paddingLeft: 48, paddingVertical: 8 },
+        dot: { width: 10, height: 10, borderRadius: 5, backgroundColor: theme.textMuted },
+      }),
+    [theme]
+  );
   const dot1 = useRef(new Animated.Value(0.5)).current;
   const dot2 = useRef(new Animated.Value(0.5)).current;
   const dot3 = useRef(new Animated.Value(0.5)).current;
@@ -60,18 +69,3 @@ export function TypingIndicator({ visible }: TypingIndicatorProps) {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flexDirection: "row",
-    gap: 6,
-    paddingLeft: 48,
-    paddingVertical: 8,
-  },
-  dot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: theme.textMuted,
-  },
-});

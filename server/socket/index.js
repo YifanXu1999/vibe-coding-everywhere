@@ -5,9 +5,10 @@
  * handling both Claude PTY sessions and terminal command execution.
  */
 import { spawn } from "child_process";
+import treeKill from "tree-kill";
 import { WORKSPACE_CWD } from "../config/index.js";
 import { killProcessOnPort } from "../utils/index.js";
-import { createClaudeProcessManager, globalSpawnChildren, killClaudePtyProcess, globalClaudePtyProcesses } from "../process/index.js";
+import { createProcessManager, globalSpawnChildren } from "../process/index.js";
 
 /**
  * Creates a manager for run-render terminals.
@@ -310,16 +311,16 @@ export function setupSocketHandlers(io) {
     // Track if Claude has completed at least one run (used for --continue flag)
     const hasCompletedFirstRunRef = { value: false };
     
-    // Create managers for Claude and terminal processes
-    const claudeManager = createClaudeProcessManager(socket, { hasCompletedFirstRunRef });
+    // Create managers for AI provider (Claude/Gemini) and terminal processes
+    const processManager = createProcessManager(socket, { hasCompletedFirstRunRef });
     const runRenderManager = createRunRenderManager(socket);
 
-    // Claude PTY events
-    socket.on("submit-prompt", claudeManager.handleSubmitPrompt);
-    socket.on("input", claudeManager.handleInput);
-    socket.on("resize", claudeManager.handleResize);
-    socket.on("claude-terminate", claudeManager.handleTerminate);
-    socket.on("claude-debug", claudeManager.handleDebug);
+    // AI PTY events (submit-prompt payload may include provider: "claude" | "gemini")
+    socket.on("submit-prompt", processManager.handleSubmitPrompt);
+    socket.on("input", processManager.handleInput);
+    socket.on("resize", processManager.handleResize);
+    socket.on("claude-terminate", processManager.handleTerminate);
+    socket.on("claude-debug", processManager.handleDebug);
 
     // Terminal/run-render events
     socket.on("run-render-new-terminal", runRenderManager.handleNewTerminal);
@@ -329,7 +330,7 @@ export function setupSocketHandlers(io) {
 
     // Clean up all processes when client disconnects
     socket.on("disconnect", () => {
-      claudeManager.cleanup();
+      processManager.cleanup();
       runRenderManager.cleanup();
     });
   });

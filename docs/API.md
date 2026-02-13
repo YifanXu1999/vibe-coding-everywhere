@@ -113,15 +113,17 @@ Serves a file raw for preview (HTML, CSS, JS).
 
 #### `submit-prompt`
 
-Start a new Claude session with a prompt.
+Start a new AI session (Claude or Gemini) with a prompt.
 
 **Payload:**
 
 ```typescript
 {
-  prompt: string;           // The prompt to send to Claude
-  permissionMode?: string;  // Optional: permission mode (default from env)
-  allowedTools?: string[];  // Optional: allowed tool patterns
+  prompt: string;           // The prompt to send
+  provider?: "claude" | "gemini";  // Optional: default from DEFAULT_PROVIDER
+  permissionMode?: string;  // Optional: Claude permission mode (default from env)
+  allowedTools?: string[];  // Optional: allowed tool patterns (Claude)
+  approvalMode?: string;    // Optional: Gemini approval mode (default, auto_edit, plan)
   replaceRunning?: boolean; // Optional: kill existing session first
 }
 ```
@@ -131,8 +133,15 @@ Start a new Claude session with a prompt.
 ```javascript
 socket.emit("submit-prompt", {
   prompt: "Create a React component",
+  provider: "gemini",
+  approvalMode: "auto_edit"
+});
+
+socket.emit("submit-prompt", {
+  prompt: "Refactor this file",
+  provider: "claude",
   permissionMode: "acceptPermissions",
-  allowedTools: ["Bash(npm *)", "Read", "Write"]
+  allowedTools: ["Read", "Write"]
 });
 ```
 
@@ -248,15 +257,17 @@ Raw output from Claude (JSON lines format).
 
 #### `claude-started`
 
-Emitted when Claude process starts.
+Emitted when AI CLI process starts.
 
 **Payload:**
 
 ```typescript
 {
-  permissionMode: string | null;
+  provider: "claude" | "gemini";
+  permissionMode: string | null;   // Claude only
   allowedTools: string[];
-  useContinue: boolean;
+  useContinue: boolean;            // Claude only
+  approvalMode: string | null;     // Gemini only
 }
 ```
 
@@ -342,9 +353,9 @@ Terminal process exited.
 
 ---
 
-## Claude Stream Format
+## AI Stream Format
 
-Claude outputs JSON lines. Common event types:
+Claude and Gemini both output JSON lines. Common event types:
 
 ### `system`
 
@@ -419,7 +430,8 @@ All errors include an `error` field:
 Server emits errors via `output` event with ANSI red color:
 
 ```
-\r\n\x1b[31m[Error] Claude not found\x1b[0m\r\n
+\r\n\x1b[31m[Error] claude not found\x1b[0m\r\n
+\r\n\x1b[31m[Error] gemini not found\x1b[0m\r\n
 ```
 
 ### Common Error Codes

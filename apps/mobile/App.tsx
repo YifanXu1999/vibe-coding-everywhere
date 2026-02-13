@@ -32,9 +32,12 @@ import {
   createWorkspaceFileService,
   getTerminalInputState,
 } from "./src/core";
-import { theme } from "./src/theme/index";
+import { ThemeProvider, getTheme, type Provider } from "./src/theme/index";
 
 export default function App() {
+  const [provider, setProvider] = useState<Provider>("gemini");
+  const theme = useMemo(() => getTheme(provider) ?? getTheme("gemini"), [provider]);
+  const styles = useMemo(() => createAppStyles(theme), [theme]);
   // DI: default implementations; can be replaced via context or props for tests.
   const serverConfig = useMemo(() => getDefaultServerConfig(), []);
   const workspaceFileService = useMemo(
@@ -100,7 +103,7 @@ export default function App() {
     selectedSequence,
     setSelectedSequence,
     lastSessionTerminated,
-  } = useSocket();
+  } = useSocket({ provider });
 
   const [terminalFullScreen, setTerminalFullScreen] = useState(false);
   const [terminalCommandInput, setTerminalCommandInput] = useState("");
@@ -224,6 +227,7 @@ export default function App() {
   }, []);
 
   return (
+    <ThemeProvider provider={provider}>
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style="dark" />
       <KeyboardAvoidingView
@@ -238,12 +242,27 @@ export default function App() {
                 <TouchableOpacity
                   style={styles.menuButton}
                   onPress={() => setSidebarVisible(true)}
-
                   activeOpacity={0.7}
                   accessibilityLabel="Open Explorer"
                 >
                   <Text style={styles.menuButtonText}>☰</Text>
                 </TouchableOpacity>
+                <View style={styles.providerToggle}>
+                  <TouchableOpacity
+                    style={[styles.providerOption, provider === "claude" && styles.providerOptionActive]}
+                    onPress={() => setProvider("claude")}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={[styles.providerOptionText, provider === "claude" && styles.providerOptionTextActive]}>Claude</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.providerOption, provider === "gemini" && styles.providerOptionActive]}
+                    onPress={() => setProvider("gemini")}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={[styles.providerOptionText, provider === "gemini" && styles.providerOptionTextActive]}>Gemini</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             )}
             <View style={styles.chatShell}>
@@ -295,6 +314,10 @@ export default function App() {
                   <RenderPreviewBar
                     pendingRender={pendingRender}
                     hasRunCommandForCurrentRender={hasRunCommandForCurrentRender}
+                    onRunRender={(command, url) => {
+                      runCommandInNewTerminal(command);
+                      if (url) handleOpenPreviewInApp(url);
+                    }}
                     onOpenPreviewInApp={handleOpenPreviewInApp}
                   />
                   {pendingRender != null && (
@@ -585,10 +608,12 @@ export default function App() {
         </Modal>
       </KeyboardAvoidingView>
     </SafeAreaView>
+    </ThemeProvider>
   );
 }
 
-const styles = StyleSheet.create({
+function createAppStyles(theme: ReturnType<typeof getTheme>) {
+  return StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: theme.beigeBg,
@@ -651,6 +676,31 @@ const styles = StyleSheet.create({
   menuButtonText: {
     fontSize: 22,
     color: theme.textPrimary,
+  },
+  providerToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  providerOption: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: theme.cardBg,
+    borderWidth: 1,
+    borderColor: theme.borderColor,
+  },
+  providerOptionActive: {
+    backgroundColor: theme.accentLight,
+    borderColor: theme.accent,
+  },
+  providerOptionText: {
+    fontSize: 13,
+    color: theme.textMuted,
+  },
+  providerOptionTextActive: {
+    color: theme.accent,
+    fontWeight: "600",
   },
   chatShell: {
     flex: 1,
@@ -922,4 +972,5 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#fff",
   },
-});
+  });
+}

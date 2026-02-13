@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
- * Parse Claude output log (NDJSON) and print human-readable text from Claude.
+ * Parse AI provider output log (NDJSON) and print human-readable text.
  * Usage: node scripts/format-claude-log.js [path-to-log]
- *        If no path given, uses latest logs/claude-output-*.log
+ *        node scripts/format-claude-log.js --provider claude|gemini
+ *        If no path given, uses latest logs/*-output-*.log
  */
 
 import fs from "fs";
@@ -11,14 +12,39 @@ import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-function getLatestLogPath() {
+function getLatestLogPath(provider) {
   const logsDir = path.join(__dirname, "..", "logs");
   if (!fs.existsSync(logsDir)) return null;
-  const files = fs.readdirSync(logsDir)
-    .filter((f) => f.startsWith("claude-output-") && f.endsWith(".log"))
-    .map((f) => ({ name: f, mtime: fs.statSync(path.join(logsDir, f)).mtime }))
-    .sort((a, b) => b.mtime - a.mtime);
-  return files.length ? path.join(logsDir, files[0].name) : null;
+
+  // Collect log files from provider subdirectories: logs/claude/, logs/gemini/
+  const providers = provider ? [provider] : ["claude", "gemini"];
+  const files = [];
+  for (const p of providers) {
+    const subDir = path.join(logsDir, p);
+    if (!fs.existsSync(subDir)) continue;
+    const prefix = `${p}-output-`;
+    for (const f of fs.readdirSync(subDir)) {
+      if (f.endsWith(".log") && f.startsWith(prefix)) {
+        const fullPath = path.join(subDir, f);
+        files.push({ path: fullPath, mtime: fs.statSync(fullPath).mtime });
+      }
+    }
+  }
+
+  // Also check legacy flat files in logs/ for backward compatibility
+  for (const f of fs.readdirSync(logsDir)) {
+    if (!f.endsWith(".log")) continue;
+    const matchesProvider = provider
+      ? f.startsWith(`${provider}-output-`)
+      : f.startsWith("claude-output-") || f.startsWith("gemini-output-");
+    if (matchesProvider) {
+      const fullPath = path.join(logsDir, f);
+      files.push({ path: fullPath, mtime: fs.statSync(fullPath).mtime });
+    }
+  }
+
+  files.sort((a, b) => b.mtime - a.mtime);
+  return files.length ? files[0].path : null;
 }
 
 function formatToolUseInput(input) {
@@ -92,12 +118,31 @@ function extractUserContent(msg) {
 }
 
 function main() {
-  const logPath = process.argv[2] || getLatestLogPath();
+  let logPath = null;
+  let provider = null;
+
+  // Parse args: support --provider claude|gemini or a direct path
+  const args = process.argv.slice(2);
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--provider" && args[i + 1]) {
+      provider = args[i + 1];
+      i++;
+    } else if (!args[i].startsWith("-")) {
+      logPath = args[i];
+    }
+  }
+
+  logPath = logPath || getLatestLogPath(provider);
   if (!logPath || !fs.existsSync(logPath)) {
     console.error("Usage: node scripts/format-claude-log.js [path-to-log]");
+    console.error("       node scripts/format-claude-log.js --provider claude|gemini");
     console.error("No log file found. Put path or run from repo with logs/.");
     process.exit(1);
   }
+
+  // Detect provider from filename for display
+  const basename = path.basename(logPath);
+  const detectedProvider = basename.startsWith("gemini-") ? "Gemini" : "Claude";
 
   const raw = fs.readFileSync(logPath, "utf8");
   const lines = raw.split("\n").map((s) => s.trim()).filter((s) => s.startsWith("{"));
@@ -200,7 +245,7 @@ function main() {
 
   // Print human-readable
   const sep = "─".repeat(60);
-  console.log("\n# Claude log (human-readable)\n");
+  console.log(`\n# ${detectedProvider} log (human-readable)\n`);
   console.log(`File: ${logPath}\n`);
 
   let currentTurn = 0;

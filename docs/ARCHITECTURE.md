@@ -38,7 +38,8 @@ This document describes the system architecture, design patterns, and component 
                     └───────────┼─────────────┘
                                 │
                     ┌───────────▼───────────┐
-                    │   Claude Code CLI     │
+                    │   AI CLI (PTY)        │
+                    │   Claude / Gemini     │
                     │   - Local execution   │
                     │   - File operations   │
                     │   - Tool use          │
@@ -55,8 +56,8 @@ server.js (entry point)
     ├──► config/      # Environment & configuration
     ├──► routes/      # HTTP request handlers
     ├──► socket/      # WebSocket event handlers
-    ├──► process/     # Claude PTY management
-    ├──► prompts/     # System prompt loading
+    ├──► process/     # AI provider PTY management (Claude, Gemini)
+    ├──► prompts/     # System prompt loading (Claude)
     └──► utils/       # Shared utilities
 ```
 
@@ -81,8 +82,8 @@ HTTP Request          Socket Event
        └──────┬──────┘
               │
        ┌──────▼──────┐
-       │ Claude CLI  │
-       │ (PTY)       │
+       │ AI CLI (PTY)│
+       │ Claude/Gemini
        └─────────────┘
 ```
 
@@ -109,31 +110,31 @@ HTTP Request          Socket Event
 
 Two main managers:
 
-1. **ClaudeProcessManager**: Handles Claude PTY lifecycle
+1. **ProcessManager** (AI provider): Handles Claude/Gemini PTY lifecycle
 2. **RunRenderManager**: Manages terminal processes for commands
 
 #### Process (`server/process/`)
 
-- Spawns Claude with proper arguments
-- Manages PTY I/O streaming
-- Handles process cleanup on shutdown
+- Provider abstraction: `claude.js` and `gemini.js` define binary, args, and error messages
+- `spawnProvider()` selects config by provider name and spawns PTY
+- Manages PTY I/O streaming and process cleanup on shutdown
 
-### Data Flow: Claude Session
+### Data Flow: AI Session (Claude or Gemini)
 
 ```
-1. Client emits "submit-prompt"
+1. Client emits "submit-prompt" (with optional provider)
           │
           ▼
-2. Server spawns Claude PTY
-   - Sets up logging
+2. Server spawns AI CLI PTY (Claude or Gemini)
+   - Sets up logging (provider-specific log path)
    - Configures TTY
           │
           ▼
-3. Claude starts, emits "claude-started"
+3. CLI starts, emits "claude-started" (payload includes provider)
           │
           ▼
 4. Output streams via "output" events
-   (JSON lines from Claude CLI)
+   (JSON lines from CLI)
           │
           ▼
 5. Session ends, emits "exit"
@@ -157,7 +158,7 @@ Two main managers:
 ├─────────────────────────────────────┤
 │  Service Layer                      │
 │  - Socket management                │
-│  - Claude event strategies          │
+│  - AI provider event strategies     │
 │  - File operations                  │
 │  - Server config                    │
 ├─────────────────────────────────────┤
@@ -193,7 +194,7 @@ const [pendingRender, setPendingRender] = useState<PendingRender | null>(null);
 
 ### Event Handling Strategy
 
-Claude events are handled via a strategy pattern:
+AI provider events (Claude, Gemini) are handled via a strategy pattern:
 
 ```typescript
 // Each event type has a handler

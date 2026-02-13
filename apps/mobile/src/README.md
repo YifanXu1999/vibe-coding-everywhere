@@ -33,10 +33,10 @@ src/
 │   │   └── url.ts      # URL utilities
 │   ├── file/           # File service
 │   │   └── service.ts  # Workspace file operations
-│   └── claude/         # Claude integration
-│       ├── eventStrategies.ts   # Event handling strategies
-│       ├── stream.ts            # Stream utilities
-│       └── terminalInput.ts     # Terminal input policy
+│   └── providers/      # AI provider integration
+│       ├── types.ts    # Shared types and helpers
+│       ├── claude/     # Claude event handlers
+│       └── gemini/     # Gemini event handlers
 └── theme/
     └── index.ts        # Theme configuration
 ```

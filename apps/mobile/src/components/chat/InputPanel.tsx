@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useMemo } from "react";
 import {
   View,
   TextInput,
@@ -10,9 +10,9 @@ import {
   Image,
 } from "react-native";
 import Svg, { Path } from "react-native-svg";
-import { theme } from "../../theme/index";
+import { useTheme } from "../../theme/index";
 
-function GlobeIcon({ size = 20, color = theme.textPrimary }: { size?: number; color?: string }) {
+function GlobeIcon({ size = 20, color = "#333" }: { size?: number; color?: string }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 256 256" fill="none">
       <Path
@@ -76,6 +76,7 @@ export function InputPanel({
   onTerminateAgent,
   onOpenWebPreview,
 }: InputPanelProps) {
+  const theme = useTheme();
   const [prompt, setPrompt] = useState("");
 
   const disabled = !waitingForUserInput && claudeRunning;
@@ -93,6 +94,8 @@ export function InputPanel({
     onSubmit(trimmed || "See code references below.", permissionMode ?? undefined);
     setPrompt("");
   }, [prompt, pendingCodeRefs.length, waitingForUserInput, claudeRunning, permissionMode, onSubmit]);
+
+  const styles = useMemo(() => createInputPanelStyles(theme), [theme]);
 
   return (
     <KeyboardAvoidingView
@@ -191,7 +194,8 @@ export function InputPanel({
   );
 }
 
-const styles = StyleSheet.create({
+function createInputPanelStyles(theme: ReturnType<typeof useTheme>) {
+  return StyleSheet.create({
   container: {
     flexDirection: "column",
     gap: 12,
@@ -379,3 +383,4 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 });
+}

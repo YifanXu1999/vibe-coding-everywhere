@@ -1,8 +1,8 @@
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useMemo } from "react";
 import { View, Text, StyleSheet, Modal, TouchableOpacity, ScrollView } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import type { PendingAskUserQuestion, AskUserQuestionItem } from "../core/types";
-import { theme } from "../../theme/index";
+import { useTheme } from "../../theme/index";
 
 export interface AskQuestionModalProps {
   /** When non-null, modal is visible and shows these questions. */
@@ -49,6 +49,8 @@ function useSelections(questions: AskUserQuestionItem[]) {
 }
 
 export function AskQuestionModal({ pending, onSubmit, onCancel }: AskQuestionModalProps) {
+  const theme = useTheme();
+  const styles = useMemo(() => createAskQuestionStyles(theme), [theme]);
   const questions = pending?.questions ?? [];
   const { getSelected, toggle, buildAnswers } = useSelections(questions);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -221,7 +223,8 @@ export function AskQuestionModal({ pending, onSubmit, onCancel }: AskQuestionMod
   );
 }
 
-const styles = StyleSheet.create({
+function createAskQuestionStyles(theme: ReturnType<typeof useTheme>) {
+  return StyleSheet.create({
   overlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.4)",
@@ -383,4 +386,5 @@ const styles = StyleSheet.create({
   btnConfirmTextDisabled: {
     color: theme.textMuted,
   },
-});
+  });
+}

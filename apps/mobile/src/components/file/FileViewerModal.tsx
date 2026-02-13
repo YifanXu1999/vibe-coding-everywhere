@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useMemo } from "react";
 import {
   View,
   Text,
@@ -15,7 +15,7 @@ import {
   type TextStyle,
 } from "react-native";
 import { Highlight, themes } from "prism-react-renderer";
-import { theme } from "../../theme/index";
+import { useTheme } from "../../theme/index";
 
 const TOP_INSET = Platform.OS === "ios" ? 50 : 28;
 
@@ -116,6 +116,8 @@ export function FileViewerModal({
   onClose,
   onAddCodeReference,
 }: FileViewerModalProps) {
+  const theme = useTheme();
+  const styles = useMemo(() => createFileViewerStyles(theme), [theme]);
   if (!visible) return null;
 
   const language = getLanguage(path);
@@ -334,7 +336,8 @@ export function FileViewerModal({
   );
 }
 
-const styles = StyleSheet.create({
+function createFileViewerStyles(theme: ReturnType<typeof useTheme>) {
+  return StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: theme.surfaceBg,
@@ -533,4 +536,5 @@ const styles = StyleSheet.create({
     minHeight: 200,
     maxWidth: Dimensions.get("window").width - 32,
   },
-});
+  });
+}
