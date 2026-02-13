@@ -47,6 +47,12 @@ npm install
 npm start
 ```
 
+For development with auto-restart on file changes:
+
+```bash
+npm run dev
+```
+
 Server listens on `http://localhost:3456` (configurable via `PORT`). It binds to `0.0.0.0` so it is reachable on the Tailscale network.
 
 ### Mock Claude (conversation replay)
@@ -76,7 +82,7 @@ The mobile app connects to the server over Tailscale so you can use it from your
 
 ### Run mobile app (see chat flow)
 
-**Run these from the repository root** (e.g. `mobile-coder-new/`), not from `apps/mobile`.
+**Run these from the repository root** (e.g. `vibe-coding-everywhere/`), not from `apps/mobile`.
 
 **Option A – Simulator / local (no Tailscale)**
 
