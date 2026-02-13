@@ -12,7 +12,8 @@
     "dev": "nodemon server.js",
     "dev:mobile": "EXPO_PUBLIC_SERVER_URL=http://localhost:3456 npm run -w mobile start",
     "dev:mobile:funnel": "node scripts/start-mobile-funnel.mjs",
-    "icons:convert": "node scripts/convert-atom-icons.mjs"
+    "icons:convert": "node scripts/convert-atom-icons.mjs",
+    "prompt:print": "node scripts/print-system-prompt.mjs"
   },
   "dependencies": {
     "express": "^4.21.2",

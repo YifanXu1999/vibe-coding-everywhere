@@ -1,169 +1,299 @@
-# Cyx - Claude Terminal with Mobile Support
+# Claude Terminal with Mobile Support
 
 Web and mobile clients that connect to a local Claude Code CLI via Socket.IO. The server spawns `claude` in a PTY and streams output in real time.
 
-## Architecture
+## Table of Contents
 
-- **Server** (`server.js`): Express + Socket.IO + node-pty, spawns `claude` CLI
-- **Web client** (`public/`): HTML/JS chat UI served at `/`
-- **Mobile client** (`apps/mobile/`): Expo React Native app with the same layout and agent interaction logic
+- [Overview](#overview)
+- [Quick Start](#quick-start)
+- [Architecture](#architecture)
+- [Configuration](#configuration)
+- [Mobile Setup](#mobile-setup)
+- [API Reference](#api-reference)
+- [Development](#development)
+- [Troubleshooting](#troubleshooting)
+- [Documentation](#documentation)
 
-### Mobile app structure (SOLID & patterns)
+## Overview
 
-The mobile app is refactored around **dependency injection**, **strategy**, and **interface segregation** so you can extend or test it without changing core logic.
+This project provides a web-based and mobile interface for interacting with Claude Code CLI. It consists of:
 
-- **`apps/mobile/src/core/`**
-  - **`types.ts`** – Domain types and small interfaces: `IConnectionState`, `IChatState`, `ITerminalState`, `IPermissionState`, `IRunRenderState`, `IServerConfig`, `IWorkspaceFileService`. Components depend on these abstractions, not concrete implementations (Interface Segregation).
-  - **`serverConfig.ts`** – Default `IServerConfig` (base URL, preview URL resolution). Inject a different implementation for tests or alternate backends (Dependency Injection).
-  - **`workspaceFileService.ts`** – Default `IWorkspaceFileService` (fetch workspace file by path). Injected into `App` so file loading is decoupled from `fetch` (Dependency Injection).
-  - **`claudeEventStrategies.ts`** – **Strategy pattern**: Claude stream events are dispatched via a registry of handlers (`system`, `assistant`, `input`, `permission_request`, etc.). New event types are added by registering a handler; the dispatcher stays unchanged (Open-Closed).
-  - **`terminalInputPolicy.ts`** – Policy for “can the user type in the selected terminal?” (`getTerminalInputState`). Replaces inline conditionals in the UI with a single place to extend behavior (Strategy for complex conditionals).
+- **Server**: Express + Socket.IO + node-pty that spawns the Claude CLI
+- **Web Client**: HTML/JS chat UI served at the root URL
+- **Mobile Client**: Expo React Native app for iOS/Android devices
 
-- **`apps/mobile/src/hooks/useSocket.ts`**
-  - Accepts optional `UseSocketOptions.serverConfig` (default: env-based config). Socket URL comes from config, not a hard-coded helper (Dependency Injection).
-  - Uses `createClaudeEventDispatcher(context)` instead of a large `switch` on event type (Strategy).
-  - Return value is typed so callers can depend on smaller slices (e.g. chat vs terminal) where needed (Interface Segregation).
+## Quick Start
 
-- **`App.tsx`**
-  - Uses `getDefaultServerConfig()` and `createWorkspaceFileService(serverConfig)` (or future context-based injection) for preview URL and file loading (Dependency Injection).
-  - Uses `getTerminalInputState(...)` to decide whether to show the terminal command input, disabled hint, or nothing (Strategy).
-
-## Setup
+See [Quick Start Guide](docs/QUICKSTART.md) for the fastest setup.
 
 ### Prerequisites
 
-- Node.js
+- Node.js (v18+)
 - [Claude Code CLI](https://docs.anthropic.com/claude/docs/claude-code) installed and in PATH
+- (Optional) [Tailscale](https://tailscale.com) for mobile access
 
-### Install
+### Installation
 
 ```bash
 npm install
 ```
 
-### Run server
+### Run the Server
 
 ```bash
 npm start
 ```
 
-For development with auto-restart on file changes:
+The server listens on `http://localhost:3456` (configurable via `PORT` env var).
+
+For development with auto-restart:
 
 ```bash
 npm run dev
 ```
 
-Server listens on `http://localhost:3456` (configurable via `PORT`). It binds to `0.0.0.0` so it is reachable on the Tailscale network.
+### Access the Web Client
 
-### Mock Claude (conversation replay)
+Open http://localhost:3456 in your browser.
 
-To test the mobile or web UI without running the real Claude CLI or API, start the server with mock mode. It will replay a log file (NDJSON from a previous Claude session) so you can see assistant messages, AskUserQuestion modals, etc.
+### Run the Mobile App
 
-```bash
-MOCK_CLAUDE=1 npm start
+See [Mobile Setup](#mobile-setup) below.
+
+---
+
+## Architecture
+
+```
+┌─────────────────┐     Socket.IO      ┌──────────────────┐
+│   Web Client    │ ◄────────────────► │   Express Server │
+│   (Browser)     │                    │   + node-pty     │
+└─────────────────┘                    └────────┬─────────┘
+                                                │
+┌─────────────────┐     Socket.IO      ┌───────▼─────────┐
+│  Mobile Client  │ ◄────────────────► │   Claude CLI    │
+│  (iOS/Android)  │                    │   (PTY process) │
+└─────────────────┘                    └─────────────────┘
 ```
 
-- **Simplified:** When the server starts, the mobile app fetches available sequences from `apps/mobile/__tests__/sequences/`. A sequence picker appears above the input bar—tap a chip to choose which sequence to replay, then send a prompt.
-- Log file: defaults to `ask-two-questions-purpose-style` from the sequences dir (or set `MOCK_CLAUDE_LOG` / `MOCK_CLAUDE_SEQUENCE` env for a specific file).
-- Optional: `MOCK_CLAUDE_DELAY_MS=80` adds a short delay between lines to simulate streaming.
+### Server Structure
 
-### Web client
+The server is organized into modular components:
 
-With the server running, open http://localhost:3456 in your browser.
+```
+server/
+├── config/         # Environment configuration
+├── utils/          # Utility functions (ANSI stripping, workspace tree)
+├── prompts/        # System prompt loading
+├── process/        # Claude PTY process management
+├── routes/         # Express API routes
+└── socket/         # Socket.IO event handlers
+```
 
-## Mobile app (Tailscale)
+### Mobile App Structure
 
-The mobile app connects to the server over Tailscale so you can use it from your phone or tablet while the server runs on your desktop.
+The mobile app follows a service-oriented architecture:
 
-### Prerequisites
+```
+apps/mobile/src/
+├── components/     # React components by feature
+│   ├── chat/       # Chat UI components
+│   ├── file/       # File viewer, sidebar
+│   ├── preview/    # Web preview, terminal output
+│   └── common/     # Shared components
+├── core/           # Domain types and interfaces
+├── services/       # Business logic
+│   ├── socket/     # Socket connection hook
+│   ├── server/     # Server configuration
+│   ├── file/       # File operations
+│   └── claude/     # Claude event handling
+└── theme/          # Styling constants
+```
 
-- [Tailscale](https://tailscale.com/download) installed on your desktop and mobile device
-- Both devices joined to the same tailnet
+### Design Patterns
 
-### Run mobile app (see chat flow)
+- **Dependency Injection**: Server config and file services are injected for testability
+- **Strategy Pattern**: Claude events are dispatched via pluggable handlers
+- **Interface Segregation**: Components depend on small, focused interfaces
 
-**Run these from the repository root** (e.g. `vibe-coding-everywhere/`), not from `apps/mobile`.
+---
 
-**Option A – Simulator / local (no Tailscale)**
+## Configuration
 
-1. Start the server in one terminal (from repo root):
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PORT` | Server port | `3456` |
+| `WORKSPACE` / `WORKSPACE_CWD` | Claude working directory | Server directory |
+| `DEFAULT_PERMISSION_MODE` | Claude permission mode | `bypassPermissions` |
+| `SIDEBAR_REFRESH_INTERVAL_MS` | File tree refresh interval | `3000` |
+
+### Command Line
+
+Set workspace via command line:
+
+```bash
+# Positional argument
+npm start -- /path/to/project
+
+# Explicit flag
+node server.js --workspace /path/to/project
+```
+
+---
+
+## Mobile Setup
+
+### Option A: Simulator / Local Development
+
+1. Start the server:
    ```bash
    npm start
    ```
 
-2. In another terminal, from repo root:
+2. In another terminal, start the mobile app:
    ```bash
    npm run dev:mobile
    ```
-   This starts Expo with `EXPO_PUBLIC_SERVER_URL=http://localhost:3456`. Open the app in iOS Simulator or Android emulator to use the chat.
 
-**Option B – Physical device over Tailscale**
+3. Open in iOS Simulator or Android emulator.
 
-1. Start the server in one terminal (from repo root):
+### Option B: Physical Device with Tailscale
+
+1. Install [Tailscale](https://tailscale.com) on your desktop and mobile device
+2. Ensure both are on the same tailnet:
+   ```bash
+   tailscale up
+   ```
+3. Start the server:
    ```bash
    npm start
    ```
-
-2. In another terminal, from repo root:
+4. Start the mobile app with tunnel:
    ```bash
    npm run dev:mobile:funnel
    ```
-   This script:
-   - Reads `tailscale status --json` to get your machine's Tailscale host (IP or MagicDNS)
-   - Sets `EXPO_PUBLIC_SERVER_URL` to `http://<tailscale-host>:3456`
-   - Starts the Expo app with tunnel mode
+5. Scan the QR code with Expo Go on your phone
 
-3. Scan the QR code with Expo Go on your phone (ensure your phone is on the same Tailscale network).
+### Mobile Environment Variables
 
-### Tailscale setup
+- `EXPO_PUBLIC_SERVER_URL`: Server URL (set automatically by scripts)
+- `EXPO_PUBLIC_DEFAULT_PERMISSION_MODE`: Default Claude permission mode
+- `EXPO_PUBLIC_PREVIEW_HOST`: Custom preview host for port-to-port access
 
-Ensure Tailscale is running on your desktop:
+---
+
+## API Reference
+
+### Socket Events
+
+#### Client → Server
+
+| Event | Payload | Description |
+|-------|---------|-------------|
+| `submit-prompt` | `{ prompt, permissionMode?, allowedTools? }` | Start Claude session |
+| `input` | `string` | Send input to Claude |
+| `resize` | `{ cols, rows }` | Resize PTY |
+| `claude-terminate` | — | Kill Claude process |
+| `run-render-command` | `{ command, url? }` | Execute command in new terminal |
+| `run-render-write` | `{ terminalId, data }` | Write to terminal stdin |
+| `run-render-terminate` | `{ terminalId }` | Kill terminal process |
+
+#### Server → Client
+
+| Event | Payload | Description |
+|-------|---------|-------------|
+| `output` | `string` | Claude output stream |
+| `claude-started` | `{ permissionMode, allowedTools, useContinue }` | Session started |
+| `exit` | `{ exitCode }` | Session ended |
+| `run-render-started` | `{ terminalId, pid? }` | Terminal created |
+| `run-render-stdout` | `{ terminalId, chunk }` | Terminal stdout |
+| `run-render-stderr` | `{ terminalId, chunk }` | Terminal stderr |
+| `run-render-exit` | `{ terminalId, code, signal }` | Terminal exited |
+
+### REST API
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/config` | Server configuration |
+| `GET /api/workspace-path` | Current workspace path |
+| `GET /api/workspace-tree` | File tree JSON |
+| `GET /api/workspace-file?path=...` | File content |
+| `GET /api/preview-raw?path=...` | Raw file for preview |
+
+---
+
+## Development
+
+### Project Scripts
 
 ```bash
-tailscale up
+# Server
+npm start              # Start server
+npm run dev            # Start with nodemon
+
+# Mobile
+npm run dev:mobile     # Start Expo with local server
+npm run dev:mobile:funnel  # Start with Tailscale tunnel
+
+# Other
+npm run icons:convert  # Convert icons
 ```
 
-Check status:
+### Adding Features
+
+**New Claude Event Handler:**
+
+1. Add handler in `server/socket/handlers/`
+2. Register in `server/socket/index.js`
+
+**New API Route:**
+
+1. Add route in `server/routes/index.js`
+
+**New Mobile Component:**
+
+1. Place in appropriate `apps/mobile/src/components/` subdirectory
+2. Import types from `apps/mobile/src/core/types`
+
+---
+
+## Troubleshooting
+
+### Mobile can't connect to server
+
+- Ensure server is running and accessible
+- Check firewall settings
+- For Tailscale: verify both devices show in `tailscale status`
+
+### Claude not found
+
+Ensure `claude` CLI is installed and in PATH:
 
 ```bash
-tailscale status --json
+which claude
+claude --version
 ```
 
-### Environment configuration
+### Port already in use
 
-- **PORT** / **SERVER_PORT**: Server port (default 3456). Used by the funnel script to build the server URL.
-- **WORKSPACE** / **WORKSPACE_CWD**: Workspace directory (Claude CWD, file tree, run commands). Defaults to the server’s directory. Can also be set from the command line (see below).
-- **SIDEBAR_REFRESH_INTERVAL_MS**: Web client sidebar file tree auto-refresh interval in milliseconds (default 3000). Set to `0` to disable auto-refresh.
-
-### Configure workspace from the command line
-
-You can set the workspace directory when starting the server:
+Kill process on port 3456 or use different port:
 
 ```bash
-# Positional argument (first non-option argument)
-npm start -- /path/to/your/project
-
-# Or explicit flag
-node server.js --workspace /path/to/your/project
+PORT=3457 npm start
 ```
 
-With nodemon:
+---
 
-```bash
-WORKSPACE=/path/to/project npm run dev
-```
+## Documentation
 
-## API / Socket events
+- [Quick Start](docs/QUICKSTART.md) - Get running in 5 minutes
+- [Architecture](docs/ARCHITECTURE.md) - System design and patterns
+- [API Reference](docs/API.md) - Complete API documentation
+- [Development](docs/DEVELOPMENT.md) - Development workflows
+- [Deployment](docs/DEPLOYMENT.md) - Production deployment guide
 
-- `submit-prompt` – Start a Claude session with a prompt
-- `output` – PTY output stream
-- `claude-started` – Session started
-- `exit` – Session ended
-- `input` – Send user input (e.g. for permission prompts)
-- `run-render-command` – Execute render command and open preview URL
-- `run-render-result` – Result of run-render-command
+## License
 
-### Extending the mobile app (Open-Closed)
-
-- **New Claude stream event type:** Implement a handler in `apps/mobile/src/core/claudeEventStrategies.ts` and register it in `createHandlerRegistry`. No change to the dispatcher or `useSocket` core logic.
-- **New server or file backend:** Implement `IServerConfig` or `IWorkspaceFileService` and pass them into `App` (e.g. via React context or props) or into `useSocket({ serverConfig })`.
+Private - For internal use only.

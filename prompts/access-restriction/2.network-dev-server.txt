@@ -1,0 +1,35 @@
+## Instruction: Network-exposed applications – allow remote hosts and use session URL/port
+
+When the task involves **any** application that listens on the network (dev servers, preview servers, APIs, static file servers), you must (1) **allow the request host** so the mobile client or Tailscale/LAN can access it, and (2) **use the session's dynamic host and the actual port** when outputting URLs.
+
+### 1. Whitelist policy for all network-facing apps
+
+For **every** tool or framework that exposes an HTTP (or similar) server, configure it to **allow the request host** so requests from the mobile client or Tailscale hostname are not blocked. Apply this when you **create or modify** the config.
+
+| Tool / stack | Config file | What to set |
+|--------------|-------------|-------------|
+| **Vite** | `vite.config.js` / `vite.config.ts` | `server: { host: true, allowedHosts: true }` (or `allowedHosts: ['specific-host']`) |
+| **Vue (Vite)** | `vite.config.js` / `vite.config.ts` | `server: { host: true, allowedHosts: true }` (same as Vite) |
+| **Vue (Vue CLI)** | `vue.config.js` | `devServer: { allowedHosts: 'all' }` (or list of hosts) |
+| **Angular** | `angular.json` (serve options) or `project.json` | `"allowedHosts": "all"` in serve options, or custom webpack `devServer.allowedHosts` |
+| **webpack-dev-server** | `webpack.config.js` or devServer options | `devServer.allowedHosts: 'all'` (or list of hosts) |
+| **Next.js** | `next.config.js` | No host check by default; if using custom server, allow all hosts or the Tailscale host |
+| **Create React App** | `.env` or eject config | `DANGEROUSLY_DISABLE_HOST_CHECK=true` (dev only) or use allowedHosts in config |
+| **Express / Node** | Your server code | Bind to `0.0.0.0` and do not validate Host header against a fixed list (or allow the Tailscale host) |
+| **Other dev servers** | Their docs | Enable "allow all hosts" or add the session host to the allowed list |
+
+If the app already has `host: true` or `0.0.0.0` for LAN/Tailscale, **still** add the host-allow (e.g. `allowedHosts`) so the server does not reject requests by hostname.
+
+### 2. Dynamic URL and port when outputting links
+
+- **Host**: Use the **session preview host** for this run. It is: **{{PREVIEW_HOST}}**
+  - If it is a real hostname (e.g. `your-machine.tail123456.ts.net`), use it when you output any dev server or preview URL so the mobile client can open it.
+  - If it shows "(not set)", output URLs with `localhost` and mention that the user can replace the host with their Tailscale hostname if they use mobile/Tailscale.
+- **Port**: Always use the **actual port** the app listens on (e.g. 5173 for Vite, 3000 for Next.js). Do not hardcode a port; use the port from the config or the command you run.
+
+**Example (when {{PREVIEW_HOST}} is set):**  
+If the session host is `yifans-macbook-pro.tail145574.ts.net` and the dev server runs on port 5173, output the clickable URL as:  
+`http://yifans-macbook-pro.tail145574.ts.net:5173/`  
+so the mobile client can open it. Do not output only `http://localhost:5173/` when the session host is set.
+
+This keeps preview and dev server URLs working from the mobile Claude client and over Tailscale.

@@ -16,24 +16,23 @@ import {
   Dimensions,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import { useSocket } from "./src/hooks/useSocket";
-import { MessageBubble, hasFileActivityContent } from "./src/components/MessageBubble";
-import { TypingIndicator } from "./src/components/TypingIndicator";
-import { RenderPreviewBar } from "./src/components/RenderPreviewBar";
-import { PermissionDenialBanner } from "./src/components/PermissionDenialBanner";
-import { AskQuestionModal } from "./src/components/AskQuestionModal";
-import { InputPanel } from "./src/components/InputPanel";
-import { PreviewWebViewModal } from "./src/components/PreviewWebViewModal";
-import { RunOutputView } from "./src/components/RunOutputView";
-import { WorkspaceSidebar } from "./src/components/WorkspaceSidebar";
-import { FileViewerModal, type CodeRefPayload } from "./src/components/FileViewerModal";
-import { DevUITestScreen } from "./src/components/DevUITestScreen";
+import { useSocket } from "./src/services/socket/hooks";
+import { MessageBubble, hasFileActivityContent } from "./src/components/chat/MessageBubble";
+import { TypingIndicator } from "./src/components/chat/TypingIndicator";
+import { RenderPreviewBar } from "./src/components/preview/RenderPreviewBar";
+import { PermissionDenialBanner } from "./src/components/common/PermissionDenialBanner";
+import { AskQuestionModal } from "./src/components/chat/AskQuestionModal";
+import { InputPanel } from "./src/components/chat/InputPanel";
+import { PreviewWebViewModal } from "./src/components/preview/PreviewWebViewModal";
+import { RunOutputView } from "./src/components/preview/RunOutputView";
+import { WorkspaceSidebar } from "./src/components/file/WorkspaceSidebar";
+import { FileViewerModal, type CodeRefPayload } from "./src/components/file/FileViewerModal";
 import {
   getDefaultServerConfig,
   createWorkspaceFileService,
   getTerminalInputState,
 } from "./src/core";
-import { theme } from "./src/theme";
+import { theme } from "./src/theme/index";
 
 export default function App() {
   // DI: default implementations; can be replaced via context or props for tests.
@@ -105,7 +104,6 @@ export default function App() {
 
   const [terminalFullScreen, setTerminalFullScreen] = useState(false);
   const [terminalCommandInput, setTerminalCommandInput] = useState("");
-  const [showDevUITest, setShowDevUITest] = useState(false);
 
   useEffect(() => {
     if (messages.length > 0) {
@@ -225,15 +223,6 @@ export default function App() {
     setTerminalFullScreen(false);
   }, []);
 
-  if (__DEV__ && showDevUITest) {
-    return (
-      <>
-        <StatusBar style="dark" />
-        <DevUITestScreen onBack={() => setShowDevUITest(false)} />
-      </>
-    );
-  }
-
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style="dark" />
@@ -249,7 +238,7 @@ export default function App() {
                 <TouchableOpacity
                   style={styles.menuButton}
                   onPress={() => setSidebarVisible(true)}
-                  onLongPress={() => __DEV__ && setShowDevUITest(true)}
+
                   activeOpacity={0.7}
                   accessibilityLabel="Open Explorer"
                 >
