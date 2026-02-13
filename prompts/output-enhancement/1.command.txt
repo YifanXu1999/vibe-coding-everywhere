@@ -1,5 +1,3 @@
-# Output
-
 ## Command execution output
 
 When the task involves running commands (shell, scripts, servers, builds, etc.), follow these rules for output and structure.
@@ -21,7 +19,7 @@ After all command execution is done, output a **full chain of commands** that wo
 Use this structure every time the task involves commands:
 
 ```
-## Command execution summary
+**Command execution summary**
 
 [Brief description of what was run and why.]
 
@@ -87,9 +85,3 @@ npm install
 npm run dev
 ```
 ```
-
-### Summary
-
-- **Always** end with a full command chain from workspace root when the task involved commands.
-- **Always** use the same section titles and structure (summary + full chain, optional multiple terminals).
-- **When** multiple processes are required (backend, frontend, workers), use one labeled terminal block per process and keep the format consistent.

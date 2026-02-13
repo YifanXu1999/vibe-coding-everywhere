@@ -521,6 +521,19 @@ export function useSocket(options: UseSocketOptions = {}) {
   );
 
   const terminateRunProcess = useCallback((terminalId: string) => {
+    // #region agent log
+    fetch("http://127.0.0.1:7242/ingest/4e3ee01c-fe3e-4a44-9e7a-dacd3fdcc465", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        location: "useSocket.ts:terminateRunProcess",
+        message: "client emitting run-render-terminate",
+        data: { terminalId, hasSocket: !!socketRef.current },
+        timestamp: Date.now(),
+        hypothesisId: "H3",
+      }),
+    }).catch(() => {});
+    // #endregion
     socketRef.current?.emit("run-render-terminate", { terminalId });
     if (terminalId === renderTerminalIdRef.current) renderTerminalIdRef.current = null;
     setRenderTerminalId((current) => (current === terminalId ? null : current));

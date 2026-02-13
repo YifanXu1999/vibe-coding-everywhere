@@ -18,15 +18,26 @@ const BASH_LANGUAGES = new Set(["bash", "sh", "shell", "zsh"]);
  */
 const URL_REGEX = /https?:\/\/[^\s\]\)\}\"']+?(?=[,;:)\]}\s]|$)/g;
 
+const LINK_PLACEHOLDER_PREFIX = "\u200B\u200BLINK";
+const LINK_PLACEHOLDER_SUFFIX = "\u200B\u200B";
+
 /** Wrap bare URLs in markdown link syntax so they render underlined and tappable. Preserves existing [text](url) links. */
 function wrapBareUrlsInMarkdown(content: string): string {
-  const existingLinks: string[] = [];
-  const stripped = content.replace(/\]\((https?:\/\/[^\)]+)\)/g, (_, url) => {
-    existingLinks.push(url);
-    return "]\u200B(" + (existingLinks.length - 1) + ")";
+  const existingLinks: Array<{ text: string; url: string }> = [];
+  // Replace entire [text](url) so the link text (which may be a URL) is not wrapped again as a bare URL.
+  const stripped = content.replace(/\[([^\]]*)\]\((https?:\/\/[^\)]+)\)/g, (_, text, url) => {
+    const idx = existingLinks.length;
+    existingLinks.push({ text, url });
+    return LINK_PLACEHOLDER_PREFIX + idx + LINK_PLACEHOLDER_SUFFIX;
   });
   const withWrapped = stripped.replace(URL_REGEX, (url) => `[${url}](${url})`);
-  return withWrapped.replace(/\]\u200B\((\d+)\)/g, (_, i) => "](" + existingLinks[Number(i)] + ")");
+  return withWrapped.replace(
+    new RegExp(LINK_PLACEHOLDER_PREFIX + "(\\d+)" + LINK_PLACEHOLDER_SUFFIX, "g"),
+    (_, i) => {
+      const { text, url } = existingLinks[Number(i)];
+      return `[${text}](${url})`;
+    }
+  );
 }
 
 interface MessageBubbleProps {
@@ -46,29 +57,9 @@ export function MessageBubble({ message, isTerminatedLabel, onRunBashCommand, on
   const refs = message.codeReferences ?? [];
 
   const markdownRules = useMemo(() => {
-    const rules: Record<string, React.ComponentType<any>> = {};
-    // Custom link rule: use full href from AST and open in internal browser when onOpenUrl provided
-    if (onOpenUrl) {
-      rules.link = (
-        node: { key?: string; attributes?: { href?: string } },
-        children: React.ReactNode,
-        _parent: unknown,
-        styles: Record<string, unknown>
-      ) => {
-        const href = (node.attributes?.href ?? "").trim();
-        return (
-          <Pressable
-            key={node.key}
-            onPress={() => href && onOpenUrl(href)}
-            style={({ pressed }) => (pressed ? { opacity: 0.8 } : undefined)}
-          >
-            <Text style={[markdownStyles.link]}>{children}</Text>
-          </Pressable>
-        );
-      };
-    }
-    if (onRunBashCommand) {
-      rules.fence = (
+    if (!onRunBashCommand) return undefined;
+    return {
+      fence: (
         node: { key?: string; content?: string; sourceInfo?: string },
         _children: React.ReactNode,
         _parent: unknown,
@@ -118,10 +109,9 @@ export function MessageBubble({ message, isTerminatedLabel, onRunBashCommand, on
           );
         }
         return codeBlock;
-      };
-    }
-    return Object.keys(rules).length > 0 ? rules : undefined;
-  }, [onRunBashCommand, onOpenUrl]);
+      },
+    };
+  }, [onRunBashCommand]);
 
   return (
     <View style={[styles.row, isUser && styles.rowUser]}>

@@ -6,6 +6,7 @@ import { spawn, execSync } from "child_process";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
+import treeKill from "tree-kill";
 import { getFormattedAccessRestrictionPrompt } from "./prompts/access-restriction/formatAccessRestrictionPrompt.js";
 
 /** Kill any process listening on the given port (e.g. leftover from Claude verification). No-op if port invalid or none bound. */
@@ -168,20 +169,48 @@ function readPromptFile(folderName, filename) {
 }
 
 /**
- * Get the "existing" body content for a prompt folder (formatted .md or command.txt).
+ * List prompt files in a folder that have a numeric prefix (1., 2., ...), sorted by that number.
+ * @param {string} folderName
+ * @returns {{ num: number, name: string }[]}
+ */
+function getOrderedPromptFilesInFolder(folderName) {
+  const folderPath = path.join(PROMPTS_DIR, folderName);
+  let entries = [];
+  try {
+    entries = fs.readdirSync(folderPath, { withFileTypes: true })
+      .filter((e) => e.isFile())
+      .map((e) => e.name);
+  } catch (err) {
+    return [];
+  }
+  const numbered = entries
+    .map((name) => {
+      const m = name.match(/^(\d+)\.(.+)$/);
+      return m ? { num: parseInt(m[1], 10), name } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.num - b.num);
+  return numbered;
+}
+
+/**
+ * Get the "existing" body content for a prompt folder: all files with prefix 1., 2., ... in order.
+ * For access-restriction, .md contents are formatted via getFormattedAccessRestrictionPrompt.
  * @param {string} folderName
  * @returns {string}
  */
 function getExistingPromptBody(folderName) {
-  if (folderName === "access-restriction") {
-    return getFormattedAccessRestrictionPrompt(WORKSPACE_CWD);
+  const ordered = getOrderedPromptFilesInFolder(folderName);
+  const parts = [];
+  for (const { name } of ordered) {
+    let content = readPromptFile(folderName, name);
+    if (!content) continue;
+    if (folderName === "access-restriction" && name.endsWith(".md")) {
+      content = getFormattedAccessRestrictionPrompt(WORKSPACE_CWD, { promptContent: content });
+    }
+    if (content) parts.push(content);
   }
-  if (folderName === "output-enhancement") {
-    const command = readPromptFile(folderName, "command.txt");
-    const url = readPromptFile(folderName, "url.txt");
-    return [command, url].filter(Boolean).join("\n\n");
-  }
-  return readPromptFile(folderName, "command.txt");
+  return parts.join("\n\n");
 }
 
 /**
@@ -196,14 +225,29 @@ function getPromptPartForFolder(folderName) {
   return parts.join("\n\n");
 }
 
-/** Combined system prompt: for each subfolder of prompts/, main.txt + existing body, then all concatenated. */
+/** Folder order: access-restriction first, output-enhancement last, others in between (alphabetically). */
+const PROMPT_FOLDER_ORDER = ["access-restriction", "output-enhancement"];
+
+function sortPromptFolders(folderNames) {
+  const ordered = new Set(PROMPT_FOLDER_ORDER);
+  const first = PROMPT_FOLDER_ORDER[0];
+  const last = PROMPT_FOLDER_ORDER[PROMPT_FOLDER_ORDER.length - 1];
+  const middle = folderNames.filter((n) => !ordered.has(n)).sort();
+  const result = [];
+  if (folderNames.includes(first)) result.push(first);
+  result.push(...middle);
+  if (last !== first && folderNames.includes(last)) result.push(last);
+  return result;
+}
+
+/** Combined system prompt: for each subfolder of prompts/, main.txt + existing body (1., 2., ...), then all concatenated. Order: access-restriction -> ... -> output-enhancement. */
 function getChatSystemPrompt() {
   let dirs = [];
   try {
     dirs = fs.readdirSync(PROMPTS_DIR, { withFileTypes: true })
       .filter((d) => d.isDirectory() && !d.name.startsWith("."))
-      .map((d) => d.name)
-      .sort();
+      .map((d) => d.name);
+    dirs = sortPromptFolders(dirs);
   } catch (err) {
     console.warn("[prompts] Failed to list", PROMPTS_DIR, err.message);
   }
@@ -390,6 +434,48 @@ const io = new Server(httpServer, {
   cors: { origin: "*" },
 });
 
+/** Track all child processes so we can kill them when the server exits (e.g. terminal closed, Ctrl+C). */
+const globalClaudePtyProcesses = new Set();
+const globalSpawnChildren = new Set();
+
+/** Kill a Claude PTY process and its entire process tree (so subprocesses started by Claude are cleaned up). */
+function killClaudePtyProcess(ptyProcess) {
+  if (!ptyProcess) return;
+  const pid = ptyProcess.pid;
+  try {
+    ptyProcess.kill();
+  } catch (_) {}
+  if (pid) {
+    try {
+      treeKill(pid, "SIGKILL", () => {});
+    } catch (_) {}
+  }
+}
+
+function shutdown(signal) {
+  const sig = signal || "SIGTERM";
+  for (const p of globalClaudePtyProcesses) {
+    killClaudePtyProcess(p);
+  }
+  globalClaudePtyProcesses.clear();
+  for (const c of globalSpawnChildren) {
+    try {
+      if (process.platform !== "win32" && c.pid) {
+        try {
+          process.kill(-c.pid, "SIGTERM");
+        } catch (_) {}
+      }
+      c.kill();
+    } catch (_) {}
+  }
+  globalSpawnChildren.clear();
+  process.exit(0);
+}
+
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGHUP", () => shutdown("SIGHUP"));
+
 function emitError(socket, message) {
   socket.emit("output", `\r\n\x1b[31m[Error] ${message}\x1b[0m\r\n`);
 }
@@ -545,6 +631,7 @@ io.on("connection", (socket) => {
         cwd: WORKSPACE_CWD,
         env: { ...process.env, TERM: "xterm-256color" },
       });
+      globalClaudePtyProcesses.add(ptyProcess);
 
       let logStream = null;
       try {
@@ -577,6 +664,7 @@ io.on("connection", (socket) => {
 
       ptyProcess.onExit(({ exitCode }) => {
         hasCompletedFirstRun = true;
+        globalClaudePtyProcesses.delete(ptyProcess);
         ptyProcess = null;
         if (logStream?.writable) {
           logStream.write(`\n--- Session ended (exit ${exitCode}) ${new Date().toISOString()} ---\n`);
@@ -585,6 +673,7 @@ io.on("connection", (socket) => {
         socket.emit("exit", { exitCode });
       });
     } catch (err) {
+      if (ptyProcess) globalClaudePtyProcesses.delete(ptyProcess);
       ptyProcess = null;
       const msg = err.code === "ENOENT"
         ? "claude not found. Install Claude Code CLI and ensure it is in PATH."
@@ -603,7 +692,8 @@ io.on("connection", (socket) => {
     const replaceRunning = !!payload?.replaceRunning;
     if (replaceRunning && (ptyProcess || mockReplayActive)) {
       if (ptyProcess) {
-        ptyProcess.kill();
+        globalClaudePtyProcesses.delete(ptyProcess);
+        killClaudePtyProcess(ptyProcess);
         ptyProcess = null;
       }
       if (mockReplayCancel) {
@@ -665,7 +755,8 @@ io.on("connection", (socket) => {
 
   socket.on("claude-terminate", () => {
     if (ptyProcess) {
-      ptyProcess.kill();
+      globalClaudePtyProcesses.delete(ptyProcess);
+      killClaudePtyProcess(ptyProcess);
       ptyProcess = null;
     }
     if (mockReplayCancel) {
@@ -681,9 +772,43 @@ io.on("connection", (socket) => {
   });
 
   const runRenderTerminals = new Map();
+  /** Preview port per terminalId so we can kill the process on that port on terminate. */
+  const runRenderPortByTerminalId = new Map();
 
   function nextTerminalId() {
     return `t-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  }
+
+  /** Kill a run-render child and its entire process tree (so subprocesses like python3/http.server exit). Cleans port, maps, and global set. */
+  function killRunRenderChild(child, terminalId) {
+    const id = typeof terminalId === "string" ? terminalId : null;
+    const port = id ? runRenderPortByTerminalId.get(id) : null;
+    if (port) {
+      killProcessOnPort(port);
+      runRenderPortByTerminalId.delete(id);
+    }
+    runRenderTerminals.delete(id);
+    globalSpawnChildren.delete(child);
+    const pid = child.pid;
+    if (pid) {
+      try {
+        treeKill(pid, "SIGKILL", (err) => {
+          if (err) {
+            try {
+              child.kill("SIGKILL");
+            } catch (_) {}
+          }
+        });
+      } catch (_) {
+        try {
+          child.kill("SIGKILL");
+        } catch (_) {}
+      }
+    } else {
+      try {
+        child.kill("SIGKILL");
+      } catch (_) {}
+    }
   }
 
   /** Create a new interactive shell terminal (for "New terminal" button). */
@@ -700,8 +825,10 @@ io.on("connection", (socket) => {
             cwd: WORKSPACE_CWD,
             stdio: ["pipe", "pipe", "pipe"],
             env: { ...process.env, TERM: "xterm-256color" },
+            detached: true,
           });
       runRenderTerminals.set(terminalId, child);
+      globalSpawnChildren.add(child);
       child.stdout?.setEncoding("utf8");
       child.stderr?.setEncoding("utf8");
       child.stdout?.on("data", (chunk) => {
@@ -711,10 +838,12 @@ io.on("connection", (socket) => {
         socket.emit("run-render-stderr", { terminalId, chunk: String(chunk) });
       });
       child.on("exit", (code, signal) => {
+        globalSpawnChildren.delete(child);
         runRenderTerminals.delete(terminalId);
         socket.emit("run-render-exit", { terminalId, code, signal: signal || null });
       });
       child.on("error", (err) => {
+        globalSpawnChildren.delete(child);
         runRenderTerminals.delete(terminalId);
         socket.emit("run-render-stderr", { terminalId, chunk: `[error] ${err.message}\n` });
         socket.emit("run-render-exit", { terminalId, code: 1, signal: null });
@@ -752,13 +881,29 @@ io.on("connection", (socket) => {
     }
     if (port) killProcessOnPort(port);
     const terminalId = nextTerminalId();
+    if (port) runRenderPortByTerminalId.set(terminalId, port);
     try {
       const child = spawn(cmd, {
         shell: true,
         cwd: WORKSPACE_CWD,
         stdio: ["pipe", "pipe", "pipe"],
+        detached: process.platform !== "win32",
       });
+      // #region agent log
+      fetch("http://127.0.0.1:7242/ingest/4e3ee01c-fe3e-4a44-9e7a-dacd3fdcc465", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          location: "server.js:run-render-command",
+          message: "spawned render process",
+          data: { terminalId, pid: child.pid ?? null, detached: process.platform !== "win32" },
+          timestamp: Date.now(),
+          hypothesisId: "H2",
+        }),
+      }).catch(() => {});
+      // #endregion
       runRenderTerminals.set(terminalId, child);
+      globalSpawnChildren.add(child);
       if (child.stdin) {
         child.stdin.on("error", () => {});
       }
@@ -771,11 +916,15 @@ io.on("connection", (socket) => {
         socket.emit("run-render-stderr", { terminalId, chunk: String(chunk) });
       });
       child.on("exit", (code, signal) => {
+        globalSpawnChildren.delete(child);
         runRenderTerminals.delete(terminalId);
+        runRenderPortByTerminalId.delete(terminalId);
         socket.emit("run-render-exit", { terminalId, code, signal: signal || null });
       });
       child.on("error", (err) => {
+        globalSpawnChildren.delete(child);
         runRenderTerminals.delete(terminalId);
+        runRenderPortByTerminalId.delete(terminalId);
         socket.emit("run-render-stderr", { terminalId, chunk: `[error] ${err.message}\n` });
         socket.emit("run-render-result", { ok: false, error: err.message || "Failed to run command.", terminalId });
       });
@@ -788,18 +937,41 @@ io.on("connection", (socket) => {
 
   socket.on("run-render-terminate", ({ terminalId }) => {
     const id = typeof terminalId === "string" ? terminalId : null;
-    if (id) {
-      const child = runRenderTerminals.get(id);
-      if (child) {
-        child.kill();
-        runRenderTerminals.delete(id);
+    const child = id ? runRenderTerminals.get(id) : null;
+    const found = !!child;
+    const pid = child?.pid ?? null;
+    // #region agent log
+    fetch("http://127.0.0.1:7242/ingest/4e3ee01c-fe3e-4a44-9e7a-dacd3fdcc465", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        location: "server.js:run-render-terminate",
+        message: found ? "killing child" : "child not found",
+        data: { terminalId: id, found, pid, mapSize: runRenderTerminals.size },
+        timestamp: Date.now(),
+        hypothesisId: found ? "H2" : "H1",
+      }),
+    }).catch(() => {});
+    // #endregion
+    if (id && child) {
+      if (child.stdin?.writable) {
+        try {
+          child.stdin.write("\x03");
+          child.stdin.write("\x04");
+        } catch (_) {}
       }
+      setTimeout(() => {
+        const currentChild = runRenderTerminals.get(id);
+        if (!currentChild) return;
+        killRunRenderChild(currentChild, id);
+      }, 3000);
     }
   });
 
   socket.on("disconnect", () => {
     if (ptyProcess) {
-      ptyProcess.kill();
+      globalClaudePtyProcesses.delete(ptyProcess);
+      killClaudePtyProcess(ptyProcess);
       ptyProcess = null;
     }
     if (mockReplayCancel) {
@@ -807,10 +979,11 @@ io.on("connection", (socket) => {
       mockReplayCancel = null;
     }
     mockReplayActive = false;
-    for (const child of runRenderTerminals.values()) {
-      child.kill();
+    for (const [tid, child] of runRenderTerminals) {
+      killRunRenderChild(child, tid);
     }
     runRenderTerminals.clear();
+    runRenderPortByTerminalId.clear();
   });
 });
 
