@@ -1,4 +1,4 @@
-## Command execution output
+## Instruction: Command execution output
 
 When the task involves running commands (shell, scripts, servers, builds, etc.), follow these rules for output and structure.
 
@@ -18,14 +18,13 @@ After all command execution is done, output a **full chain of commands** that wo
 
 Use this structure every time the task involves commands:
 
-```
-**Command execution summary**
+#### Command execution summary
 
 [Brief description of what was run and why.]
 
-## Full command chain (from workspace root)
+**Full command chain (from workspace root)**
 
-### Terminal 1: [role, e.g. "Backend server" or "Main / one-off commands"]
+Terminal 1: [role, e.g. "Backend server" or "Main / one-off commands"]
 
 ```bash
 cd /path/from/workspace/root
@@ -33,21 +32,6 @@ cd /path/from/workspace/root
 command1
 command2
 ```
-
-### Terminal 2: [role, e.g. "Frontend dev server"] (if needed)
-
-```bash
-cd /path/from/workspace/root
-command1
-command2
-```
-
-[Repeat Terminal 3, 4, … only if the task actually required more terminals.]
-```
-
-- Keep section titles and subsections identical across tasks.
-- Use the same markdown (headers, code blocks, bash).
-- If only one terminal is needed, output a single "Terminal 1" block; do not add fake Terminal 2.
 
 ### 3. Multiple terminals (backend, frontend, etc.)
 
@@ -64,12 +48,9 @@ When the task needs **more than one terminal** (e.g. backend server + frontend d
   - All commands that must run in that terminal, in order
 - In the summary, state that multiple terminals are required and what each is for.
 
-Example for backend + frontend:
+***Example for backend + frontend:***
 
-```
-## Full command chain (from workspace root)
-
-### Terminal 1: Backend server
+Terminal 1: Backend server
 
 ```bash
 cd server
@@ -77,11 +58,10 @@ npm install
 npm run dev
 ```
 
-### Terminal 2: Frontend dev server
+Terminal 2: Frontend dev server
 
 ```bash
 cd apps/web
 npm install
 npm run dev
-```
 ```

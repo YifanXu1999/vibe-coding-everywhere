@@ -53,7 +53,6 @@ interface MessageBubbleProps {
 export function MessageBubble({ message, isTerminatedLabel, onRunBashCommand, onOpenUrl }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
-  const avatarText = message.role === "assistant" ? "C" : message.role === "user" ? "You" : "!";
   const refs = message.codeReferences ?? [];
 
   const markdownRules = useMemo(() => {
@@ -115,11 +114,6 @@ export function MessageBubble({ message, isTerminatedLabel, onRunBashCommand, on
 
   return (
     <View style={[styles.row, isUser && styles.rowUser]}>
-      {!isUser && (
-        <View style={[styles.avatar, isUser && styles.avatarUser]}>
-          <Text style={[styles.avatarText, isUser && styles.avatarTextUser]}>{avatarText}</Text>
-        </View>
-      )}
       <View style={[styles.bubble, isUser && styles.bubbleUser, isSystem && styles.bubbleSystem]}>
         {message.content && message.content.trim() !== "" ? (
           isTerminatedLabel ? (
@@ -174,11 +168,6 @@ export function MessageBubble({ message, isTerminatedLabel, onRunBashCommand, on
           </View>
         )}
       </View>
-      {isUser && (
-        <View style={[styles.avatar, styles.avatarUser]}>
-          <Text style={styles.avatarTextUser}>{avatarText}</Text>
-        </View>
-      )}
     </View>
   );
 }
@@ -209,25 +198,6 @@ const styles = StyleSheet.create({
   rowUser: {
     flexDirection: "row",
     justifyContent: "flex-end",
-  },
-  avatar: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: theme.accentLight,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  avatarUser: {
-    backgroundColor: "#000",
-  },
-  avatarText: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: theme.accent,
-  },
-  avatarTextUser: {
-    color: "#fff",
   },
   bubble: {
     paddingVertical: 16,

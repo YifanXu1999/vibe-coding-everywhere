@@ -1,4 +1,4 @@
-## Openable URL output format
+## Instruction: Openable URL output format
 
 When the task produces a URL that the user can open (e.g. preview, dev server, local server, docs), output it so the app can show it as a **clickable link** that opens in the in-app browser with the **full URL including path** preserved.
 
@@ -22,22 +22,18 @@ When the task produces a URL that the user can open (e.g. preview, dev server, l
 5. **Do not hide the URL only in code**
    - If the URL is the main thing the user should open, do not put it only inside a code block. Put it in normal prose, on its own line, or use the Markdown link form above so the app can turn it into a clickable link.
    - You may still repeat the same URL in a code block for copy-paste if needed.
-6. ** Display the output at the end of the command execution.**
+6. **Display the output at the end of the command execution.**
 
 ### Example (expected output)
 
 **Option A — URL on its own line (nothing else on that line):**
 
-```
- **Access the page at:**
+**Access the page at:**
 
 http://localhost:8000/abc.html
-```
 
 **Option B — Markdown link (most reliable for full path):**
 
-```
 Access the page at: [http://localhost:8000/abc.html](http://localhost:8000/abc.html)
-```
 
 The app will render the URL as an underlined link; tapping it opens the page in the in-app browser with the full URL (including path) preserved.

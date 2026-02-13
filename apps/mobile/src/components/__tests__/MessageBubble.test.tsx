@@ -20,19 +20,6 @@ describe("MessageBubble", () => {
       render(<MessageBubble message={message} />);
 
       expect(screen.getByText("Hello, Claude!")).toBeTruthy();
-      expect(screen.getByText("You")).toBeTruthy();
-    });
-
-    it("shows You avatar for user messages", () => {
-      const message: Message = {
-        id: "1",
-        role: "user",
-        content: "Test message",
-      };
-
-      render(<MessageBubble message={message} />);
-
-      expect(screen.getByText("You")).toBeTruthy();
     });
   });
 
@@ -47,19 +34,6 @@ describe("MessageBubble", () => {
       render(<MessageBubble message={message} />);
 
       expect(screen.getByText("Hello! How can I help you today?")).toBeTruthy();
-      expect(screen.getByText("C")).toBeTruthy();
-    });
-
-    it("shows C avatar for assistant messages", () => {
-      const message: Message = {
-        id: "2",
-        role: "assistant",
-        content: "Response",
-      };
-
-      render(<MessageBubble message={message} />);
-
-      expect(screen.getByText("C")).toBeTruthy();
     });
   });
 
@@ -74,19 +48,6 @@ describe("MessageBubble", () => {
       render(<MessageBubble message={message} />);
 
       expect(screen.getByText("Claude needs your input.")).toBeTruthy();
-      expect(screen.getByText("!")).toBeTruthy();
-    });
-
-    it("shows ! avatar for system messages", () => {
-      const message: Message = {
-        id: "3",
-        role: "system",
-        content: "System notification",
-      };
-
-      render(<MessageBubble message={message} />);
-
-      expect(screen.getByText("!")).toBeTruthy();
     });
   });
 
@@ -274,9 +235,9 @@ describe("MessageBubble", () => {
 
       const { toJSON } = render(<MessageBubble message={message} />);
 
-      // Should still render the bubble structure
+      // Should still render the bubble structure (placeholder for empty assistant content)
       expect(toJSON()).not.toBeNull();
-      expect(screen.getByText("C")).toBeTruthy();
+      expect(screen.getByText("…")).toBeTruthy();
     });
 
     it("renders with empty code references array", () => {

@@ -386,6 +386,7 @@ export default function App() {
               onShowTerminal={() => flatListRef.current?.scrollToEnd({ animated: true })}
               onOpenTerminal={() => setTerminalFullScreen(true)}
               onTerminateAgent={terminateAgent}
+              onOpenWebPreview={() => setPreviewUrl("")}
             />
           </View>
         </View>
@@ -604,7 +605,7 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: "column",
     paddingHorizontal: 24,
-    paddingTop: 16,
+    paddingTop: 8,
     paddingBottom: 16,
   },
   contentArea: {
@@ -632,7 +633,7 @@ const styles = StyleSheet.create({
   },
   menuButtonOverlay: {
     position: "absolute",
-    top: 0,
+    top: -8,
     left: 0,
     right: 0,
     height: 56,

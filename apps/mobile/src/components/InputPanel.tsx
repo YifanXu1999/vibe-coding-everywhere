@@ -9,7 +9,19 @@ import {
   Platform,
   Image,
 } from "react-native";
+import Svg, { Path } from "react-native-svg";
 import { theme } from "../theme";
+
+function GlobeIcon({ size = 20, color = theme.textPrimary }: { size?: number; color?: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 256 256" fill="none">
+      <Path
+        fill={color}
+        d="M222.35693,161.11682a99.99106,99.99106,0,0,0-.02246-66.2959,3.99577,3.99577,0,0,0-.16308-.46191A100.00019,100.00019,0,0,0,33.83105,94.3512a4.01515,4.01515,0,0,0-.17773.50415,99.99136,99.99136,0,0,0,.03125,66.37927,4.14511,4.14511,0,0,0,.13965.3949,100,100,0,0,0,188.34228.02624A3.96321,3.96321,0,0,0,222.35693,161.11682ZM128,216.03064c-14.43311-13.53882-25.105-31.73706-30.93994-52.03027h61.87988C153.105,184.29358,142.43311,202.49182,128,216.03064ZM95.02979,156.00037a130.90714,130.90714,0,0,1-.00049-56h65.9414a130.90714,130.90714,0,0,1-.00049,56ZM36,128.00037a91.65778,91.65778,0,0,1,4.36182-28H86.76123a143.33386,143.33386,0,0,0,.00049,56H40.36182A91.65787,91.65787,0,0,1,36,128.00037Zm92-88.03028c14.43506,13.53858,25.10693,31.73633,30.94092,52.03028H97.05908C102.89307,71.70642,113.56494,53.50867,128,39.97009Zm41.23877,60.03028h46.39941a92.05165,92.05165,0,0,1,0,56h-46.3999a143.33386,143.33386,0,0,0,.00049-56Zm43.42187-8H167.36426c-5.70655-21.50928-16.53174-40.7439-31.61377-55.67041A92.20548,92.20548,0,0,1,212.66064,92.00037ZM120.24951,36.33c-15.082,14.92651-25.90722,34.16113-31.61377,55.67041H43.33936A92.20548,92.20548,0,0,1,120.24951,36.33ZM43.33936,164.00037H88.63574c5.707,21.50879,16.53174,40.74353,31.61377,55.67041A92.20529,92.20529,0,0,1,43.33936,164.00037Zm92.41113,55.67041c15.082-14.92688,25.90674-34.16162,31.61377-55.67041h45.29638A92.20529,92.20529,0,0,1,135.75049,219.67078Z"
+      />
+    </Svg>
+  );
+}
 
 const DEFAULT_PLACEHOLDER = "How can I help you today?";
 const INPUT_PLACEHOLDER = "Type response for Claude…";
@@ -44,6 +56,8 @@ export interface InputPanelProps {
   onOpenTerminal?: () => void;
   /** When agent is running, show a control to terminate the response. */
   onTerminateAgent?: () => void;
+  /** Open web preview modal. */
+  onOpenWebPreview?: () => void;
 }
 
 export function InputPanel({
@@ -60,6 +74,7 @@ export function InputPanel({
   onShowTerminal,
   onOpenTerminal,
   onTerminateAgent,
+  onOpenWebPreview,
 }: InputPanelProps) {
   const [prompt, setPrompt] = useState("");
 
@@ -127,6 +142,16 @@ export function InputPanel({
             <Text style={styles.modelName}>Sonnet 4.5</Text>
             <Text style={styles.chevron}>▼</Text>
           </View>
+          {onOpenWebPreview && (
+            <TouchableOpacity
+              style={styles.btnWebPreview}
+              onPress={onOpenWebPreview}
+              activeOpacity={0.8}
+              accessibilityLabel="Open web preview"
+            >
+              <GlobeIcon size={20} color={theme.textPrimary} />
+            </TouchableOpacity>
+          )}
           {onOpenTerminal && (
             <TouchableOpacity
               style={[styles.btnTerminal, runProcessActive && styles.btnTerminalActive]}
@@ -261,6 +286,16 @@ const styles = StyleSheet.create({
   chevron: {
     fontSize: 10,
     color: theme.textMuted,
+  },
+  btnWebPreview: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: "rgba(0,0,0,0.06)",
+    borderWidth: 1,
+    borderColor: theme.borderColor,
+    alignItems: "center",
+    justifyContent: "center",
   },
   btnTerminal: {
     width: 36,

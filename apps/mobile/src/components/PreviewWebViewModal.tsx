@@ -21,6 +21,18 @@ function normalizeUrl(input: string): string {
   return "https://" + trimmed;
 }
 
+/** Strip our cache-bust param so storing this URL doesn't cause loadUri to change every time and trigger reload loop. */
+function stripPreviewParam(href: string): string {
+  try {
+    const u = new URL(href);
+    u.searchParams.delete("_preview");
+    const out = u.toString();
+    return out.endsWith("?") ? out.slice(0, -1) : out;
+  } catch {
+    return href.replace(/([?&])_preview=[^&]*&?/g, (_, p) => (p === "?" ? "" : p)).replace(/\?$/, "");
+  }
+}
+
 interface PreviewWebViewModalProps {
   visible: boolean;
   url: string;
@@ -38,6 +50,8 @@ export function PreviewWebViewModal({
   const [error, setError] = useState<string | null>(null);
   const [currentUrl, setCurrentUrl] = useState(() => url?.trim() ?? "");
   const [urlInputValue, setUrlInputValue] = useState(() => url?.trim() ?? "");
+  /** Cache-bust key so each load hits the network; avoids showing stale page when server is terminated. */
+  const [loadKey, setLoadKey] = useState(() => Date.now());
   const webViewRef = useRef<WebView>(null);
   const insets = useSafeAreaInsets();
 
@@ -48,6 +62,7 @@ export function PreviewWebViewModal({
       setUrlInputValue(resolved);
       setError(null);
       setLoading(true);
+      setLoadKey(Date.now());
     }
   }, [visible, url]);
 
@@ -60,18 +75,20 @@ export function PreviewWebViewModal({
     setUrlInputValue(resolved);
     setLoading(true);
     setError(null);
+    setLoadKey(Date.now());
   };
 
   const handleReload = () => {
     setError(null);
     setLoading(true);
-    webViewRef.current?.reload();
+    setLoadKey(Date.now());
   };
 
   const handleNavigationStateChange = (navState: { url?: string }) => {
     if (navState.url) {
-      setCurrentUrl(navState.url);
-      setUrlInputValue(navState.url);
+      const clean = stripPreviewParam(navState.url);
+      setCurrentUrl(clean);
+      setUrlInputValue(clean);
     }
   };
 
@@ -79,6 +96,13 @@ export function PreviewWebViewModal({
 
   const resolvedUrl = currentUrl || url?.trim() || "";
   const showWebView = resolvedUrl && !error;
+  /** Base URL without our param; used for stable key so we don't remount and reload in a loop. */
+  const baseUrl = stripPreviewParam(resolvedUrl) || resolvedUrl;
+  /** Cache-busting URI so we always request from network; if server is down we get onError instead of cached page. */
+  const loadUri =
+    resolvedUrl && loadKey
+      ? baseUrl + (baseUrl.includes("?") ? "&" : "?") + "_preview=" + loadKey
+      : "";
 
   return (
     <Modal
@@ -152,8 +176,8 @@ export function PreviewWebViewModal({
             ) : (
               <WebView
                 ref={webViewRef}
-                key={resolvedUrl}
-                source={{ uri: resolvedUrl }}
+                key={loadKey ? `${loadKey}-${baseUrl}` : resolvedUrl}
+                source={{ uri: loadUri }}
                 style={styles.webview}
                 onLoadStart={() => {
                   setLoading(true);
@@ -178,6 +202,8 @@ export function PreviewWebViewModal({
                 startInLoadingState
                 scalesPageToFit
                 mixedContentMode="compatibility"
+                cacheEnabled={false}
+                {...(Platform.OS === "android" ? { cacheMode: "LOAD_NO_CACHE" as const } : {})}
               />
             )}
           </View>
