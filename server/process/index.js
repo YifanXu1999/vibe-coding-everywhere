@@ -6,7 +6,7 @@ import pty from "node-pty";
 import fs from "fs";
 import path from "path";
 import {
-  WORKSPACE_CWD,
+  getWorkspaceCwd,
   getProviderLogPath,
   DEFAULT_PERMISSION_MODE,
   DEFAULT_GEMINI_APPROVAL_MODE,
@@ -87,7 +87,7 @@ export function spawnProvider(socket, provider, prompt, options) {
       name: "xterm-256color",
       cols: 80,
       rows: 24,
-      cwd: WORKSPACE_CWD,
+      cwd: getWorkspaceCwd(),
       env: { ...process.env, TERM: "xterm-256color" },
     });
     globalPtyProcesses.add(ptyProcess);
@@ -209,6 +209,12 @@ export function createProcessManager(socket, { hasCompletedFirstRunRef }) {
         ? payload.approvalMode.trim()
         : DEFAULT_GEMINI_APPROVAL_MODE;
 
+    const defaultModel = provider === "claude" ? "sonnet" : "gemini-2.5-flash";
+    const model =
+      typeof payload?.model === "string" && payload.model.trim()
+        ? payload.model.trim()
+        : defaultModel;
+
     let appendSystemPrompt = null;
     if (provider === "claude") {
       appendSystemPrompt = getChatSystemPrompt();
@@ -222,6 +228,7 @@ export function createProcessManager(socket, { hasCompletedFirstRunRef }) {
     }
 
     const options = {
+      model,
       permissionMode: permissionMode || null,
       allowedTools,
       useContinue,

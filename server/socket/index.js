@@ -6,7 +6,7 @@
  */
 import { spawn } from "child_process";
 import treeKill from "tree-kill";
-import { WORKSPACE_CWD } from "../config/index.js";
+import { getWorkspaceCwd } from "../config/index.js";
 import { killProcessOnPort } from "../utils/index.js";
 import { createProcessManager, globalSpawnChildren } from "../process/index.js";
 
@@ -88,13 +88,14 @@ function createRunRenderManager(socket) {
     try {
       // Spawn appropriate shell for the platform
       const isWin = process.platform === "win32";
+      const cwd = getWorkspaceCwd();
       const child = isWin
         ? spawn("cmd", ["/K"], {
-            cwd: WORKSPACE_CWD,
+            cwd,
             stdio: ["pipe", "pipe", "pipe"],
           })
         : spawn("bash", ["-i"], {
-            cwd: WORKSPACE_CWD,
+            cwd,
             stdio: ["pipe", "pipe", "pipe"],
             env: { ...process.env, TERM: "xterm-256color" },
             detached: true,
@@ -196,7 +197,7 @@ function createRunRenderManager(socket) {
       // Spawn command in shell
       const child = spawn(cmd, {
         shell: true,
-        cwd: WORKSPACE_CWD,
+        cwd: getWorkspaceCwd(),
         stdio: ["pipe", "pipe", "pipe"],
         detached: process.platform !== "win32",
       });

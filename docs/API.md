@@ -121,6 +121,7 @@ Start a new AI session (Claude or Gemini) with a prompt.
 {
   prompt: string;           // The prompt to send
   provider?: "claude" | "gemini";  // Optional: default from DEFAULT_PROVIDER
+  model?: string;          // Optional: Claude (haiku, sonnet, opus) or Gemini (e.g. gemini-2.5-flash); default by provider
   permissionMode?: string;  // Optional: Claude permission mode (default from env)
   allowedTools?: string[];  // Optional: allowed tool patterns (Claude)
   approvalMode?: string;    // Optional: Gemini approval mode (default, auto_edit, plan)

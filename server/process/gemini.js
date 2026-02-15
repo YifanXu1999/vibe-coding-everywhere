@@ -9,6 +9,7 @@ export const geminiConfig = {
   buildArgs: (prompt, opts) => [
     "--output-format",
     "stream-json",
+    ...(opts.model ? ["--model", opts.model] : []),
     ...(opts.useContinue ? ["--resume"] : []),
     ...(opts.approvalMode ? ["--approval-mode", opts.approvalMode] : []),
     "-p",

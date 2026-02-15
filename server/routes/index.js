@@ -9,7 +9,7 @@
  */
 import fs from "fs";
 import path from "path";
-import { SIDEBAR_REFRESH_INTERVAL_MS, WORKSPACE_CWD } from "../config/index.js";
+import { SIDEBAR_REFRESH_INTERVAL_MS, getWorkspaceCwd, setWorkspaceCwd, WORKSPACE_ALLOWED_ROOT } from "../config/index.js";
 import { buildWorkspaceTree, IMAGE_EXT, MAX_TEXT_FILE_BYTES } from "../utils/index.js";
 
 /**
@@ -42,11 +42,50 @@ export function setupRoutes(app) {
 
   /**
    * GET /api/workspace-path
-   * Returns the absolute path to the current workspace directory.
-   * Used by clients to display current project location.
+   * Returns the absolute path to the current workspace directory and allowed root for workspace selection.
+   * Used by clients to display current project location and to build workspace picker.
    */
   app.get("/api/workspace-path", (_, res) => {
-    res.json({ path: WORKSPACE_CWD });
+    res.json({ path: getWorkspaceCwd(), allowedRoot: WORKSPACE_ALLOWED_ROOT });
+  });
+
+  /**
+   * POST /api/workspace-path
+   * Set workspace directory at runtime. Body: { path: string }. Path must be under WORKSPACE_ALLOWED_ROOT.
+   */
+  app.post("/api/workspace-path", (req, res) => {
+    const raw = req.body?.path ?? req.query?.path;
+    const result = setWorkspaceCwd(raw);
+    if (result.ok) {
+      res.json({ path: getWorkspaceCwd() });
+    } else {
+      res.status(400).json({ error: result.error });
+    }
+  });
+
+  /**
+   * GET /api/workspace-allowed-children
+   * Returns list of direct child directories of the allowed root (or a subpath) for workspace selection.
+   * Query: parent (optional) - path relative to allowed root, e.g. "" or "machine_learning"
+   */
+  app.get("/api/workspace-allowed-children", (req, res) => {
+    try {
+      const parent = typeof req.query.parent === "string" ? req.query.parent.replace(/^\/+/, "") : "";
+      const dir = parent ? path.join(WORKSPACE_ALLOWED_ROOT, parent) : WORKSPACE_ALLOWED_ROOT;
+      if (!dir.startsWith(WORKSPACE_ALLOWED_ROOT)) {
+        return res.status(403).json({ error: "Path outside allowed root" });
+      }
+      if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
+        return res.json({ children: [] });
+      }
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      const children = entries
+        .filter((e) => e.isDirectory() && !e.name.startsWith("."))
+        .map((e) => ({ name: e.name, path: path.join(dir, e.name) }));
+      res.json({ children });
+    } catch (err) {
+      res.status(500).json({ error: err.message || "Failed to list directories" });
+    }
   });
 
   /**
@@ -57,8 +96,9 @@ export function setupRoutes(app) {
    */
   app.get("/api/workspace-tree", (_, res) => {
     try {
-      const tree = buildWorkspaceTree(WORKSPACE_CWD);
-      res.json({ root: path.basename(WORKSPACE_CWD), tree });
+      const cwd = getWorkspaceCwd();
+      const tree = buildWorkspaceTree(cwd);
+      res.json({ root: path.basename(cwd), tree });
     } catch (err) {
       res.status(500).json({ error: err.message || "Failed to read workspace" });
     }
@@ -81,10 +121,11 @@ export function setupRoutes(app) {
     try {
       // Normalize path and prevent directory traversal attacks
       const normalized = path.normalize(relPath).replace(/^(\.\.(\/|\\|$))+/, "").replace(/^\//, "");
-      const fullPath = path.join(WORKSPACE_CWD, normalized);
+      const cwd = getWorkspaceCwd();
+      const fullPath = path.join(cwd, normalized);
       
       // Security check: ensure path stays within workspace
-      if (!fullPath.startsWith(WORKSPACE_CWD)) {
+      if (!fullPath.startsWith(cwd)) {
         return res.status(403).send("Path outside workspace");
       }
       
@@ -121,10 +162,11 @@ export function setupRoutes(app) {
     
     // Normalize and prevent directory traversal
     const normalized = path.normalize(rawPath).replace(/^(\.\.(\/|\\|$))+/, "").replace(/^\//, "");
-    const fullPath = path.join(WORKSPACE_CWD, normalized);
+    const cwd = getWorkspaceCwd();
+    const fullPath = path.join(cwd, normalized);
     
     // Security check
-    if (!fullPath.startsWith(WORKSPACE_CWD)) return next();
+    if (!fullPath.startsWith(cwd)) return next();
     
     try {
       const stat = fs.statSync(fullPath);
@@ -162,10 +204,11 @@ export function setupRoutes(app) {
     try {
       // Normalize path
       const normalized = path.normalize(relPath).replace(/^(\.\.(\/|\\|$))+/, "");
-      const fullPath = path.join(WORKSPACE_CWD, normalized);
+      const cwd = getWorkspaceCwd();
+      const fullPath = path.join(cwd, normalized);
       
       // Security check
-      if (!fullPath.startsWith(WORKSPACE_CWD)) {
+      if (!fullPath.startsWith(cwd)) {
         return res.status(403).json({ error: "Path outside workspace" });
       }
       

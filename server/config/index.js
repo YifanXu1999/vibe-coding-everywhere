@@ -58,8 +58,43 @@ function resolveWorkspaceCwd() {
 // Server port - can be overridden via PORT environment variable
 export const PORT = process.env.PORT || 3456;
 
-// Workspace directory where Claude operates and files are served from
-export const WORKSPACE_CWD = resolveWorkspaceCwd();
+// Allowed workspace root for runtime switching (only paths under this are allowed)
+export const WORKSPACE_ALLOWED_ROOT = path.resolve("/Users/yifanxu");
+
+// Mutable workspace directory (can be changed via POST /api/workspace-path)
+let currentWorkspaceCwd = resolveWorkspaceCwd();
+
+/** Get current workspace directory. Used everywhere instead of static WORKSPACE_CWD. */
+export function getWorkspaceCwd() {
+  return currentWorkspaceCwd;
+}
+
+/**
+ * Set workspace directory at runtime. Path must exist, be a directory, and be under WORKSPACE_ALLOWED_ROOT.
+ * @param {string} newPath - Absolute or relative path
+ * @returns {{ ok: boolean; error?: string }}
+ */
+export function setWorkspaceCwd(newPath) {
+  if (typeof newPath !== "string" || !newPath.trim()) {
+    return { ok: false, error: "Path is required" };
+  }
+  const resolved = path.resolve(newPath);
+  if (!resolved.startsWith(WORKSPACE_ALLOWED_ROOT)) {
+    return { ok: false, error: `Path must be under ${WORKSPACE_ALLOWED_ROOT}` };
+  }
+  try {
+    if (!fs.existsSync(resolved)) return { ok: false, error: "Path does not exist" };
+    const stat = fs.statSync(resolved);
+    if (!stat.isDirectory()) return { ok: false, error: "Path is not a directory" };
+  } catch (err) {
+    return { ok: false, error: err.message || "Invalid path" };
+  }
+  currentWorkspaceCwd = resolved;
+  return { ok: true };
+}
+
+// Workspace directory where Claude operates and files are served from (initial value; use getWorkspaceCwd() for current)
+export const WORKSPACE_CWD = currentWorkspaceCwd;
 
 // File tree refresh interval for sidebar (milliseconds)
 export const SIDEBAR_REFRESH_INTERVAL_MS = parseInt(process.env.SIDEBAR_REFRESH_INTERVAL_MS || "3000", 10) || 3000;

@@ -33,10 +33,43 @@ import {
   getTerminalInputState,
 } from "./src/core";
 import { ThemeProvider, getTheme, type Provider } from "./src/theme/index";
+import { SettingsModal, type PermissionModeUI } from "./src/components/settings/SettingsModal";
+
+const CLAUDE_MODELS: { value: string; label: string }[] = [
+  { value: "haiku", label: "Haiku 4.5" },
+  { value: "sonnet", label: "Sonnet 4.5" },
+  { value: "opus", label: "Opus 4.5" },
+];
+const GEMINI_MODELS: { value: string; label: string }[] = [
+  { value: "gemini-2.5-pro", label: "2.5 Pro" },
+  { value: "gemini-2.5-flash", label: "2.5 Flash" },
+  { value: "gemini-2.5-flash-lite", label: "2.5 Flash Lite" },
+];
+const DEFAULT_CLAUDE_MODEL = "sonnet";
+const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
+
+/** Map UI permission mode + provider to backend permissionMode (Claude) and approvalMode (Gemini). */
+function getBackendPermissionMode(ui: PermissionModeUI, provider: Provider): { permissionMode?: string; approvalMode?: string } {
+  if (ui === "yolo") {
+    return provider === "claude" ? { permissionMode: "bypassPermissions" } : { approvalMode: "auto_edit" };
+  }
+  if (ui === "always_ask") {
+    return provider === "claude" ? { permissionMode: "acceptPermissions" } : { approvalMode: "plan" };
+  }
+  // ask_once_per_session
+  return provider === "claude" ? { permissionMode: "acceptPermissions" } : { approvalMode: "default" };
+}
 
 export default function App() {
   const [provider, setProvider] = useState<Provider>("gemini");
+  const [model, setModel] = useState(DEFAULT_GEMINI_MODEL);
   const theme = useMemo(() => getTheme(provider) ?? getTheme("gemini"), [provider]);
+
+  const modelOptions = provider === "claude" ? CLAUDE_MODELS : GEMINI_MODELS;
+  const setProviderAndModel = useCallback((p: Provider) => {
+    setProvider(p);
+    setModel(p === "claude" ? DEFAULT_CLAUDE_MODEL : DEFAULT_GEMINI_MODEL);
+  }, []);
   const styles = useMemo(() => createAppStyles(theme), [theme]);
   // DI: default implementations; can be replaced via context or props for tests.
   const serverConfig = useMemo(() => getDefaultServerConfig(), []);
@@ -45,9 +78,14 @@ export default function App() {
     [serverConfig]
   );
 
-  const defaultPermissionMode =
-    (typeof process !== "undefined" && process.env?.EXPO_PUBLIC_DEFAULT_PERMISSION_MODE) || "bypassPermissions";
-  const [permissionMode, setPermissionMode] = useState<string | null>(defaultPermissionMode);
+  const defaultPermissionModeUI: PermissionModeUI =
+    (typeof process !== "undefined" && process.env?.EXPO_PUBLIC_DEFAULT_PERMISSION_MODE === "acceptPermissions")
+      ? "always_ask"
+      : "yolo";
+  const [permissionModeUI, setPermissionModeUI] = useState<PermissionModeUI>(defaultPermissionModeUI);
+  const [settingsVisible, setSettingsVisible] = useState(false);
+  const [workspacePath, setWorkspacePath] = useState<string | null>(null);
+  const [workspacePathLoading, setWorkspacePathLoading] = useState(false);
   const initialPreviewUrl =
     typeof process !== "undefined" && process.env?.EXPO_PUBLIC_INITIAL_PREVIEW_URL
       ? process.env.EXPO_PUBLIC_INITIAL_PREVIEW_URL.trim()
@@ -98,12 +136,13 @@ export default function App() {
     runUserCommand,
     terminateRunProcess,
     terminateAgent,
+    resetSession,
     canRunInSelectedTerminal,
     mockSequences,
     selectedSequence,
     setSelectedSequence,
     lastSessionTerminated,
-  } = useSocket({ provider });
+  } = useSocket({ provider, model });
 
   const [terminalFullScreen, setTerminalFullScreen] = useState(false);
   const [terminalCommandInput, setTerminalCommandInput] = useState("");
@@ -179,19 +218,21 @@ export default function App() {
   }, []);
 
   const handleSubmit = useCallback(
-    (prompt: string, pm?: string) => {
+    (prompt: string, _pm?: string) => {
+      const backend = getBackendPermissionMode(permissionModeUI, provider);
       submitPrompt(
         prompt,
-        pm ?? permissionMode ?? undefined,
+        backend.permissionMode,
         undefined,
-        pendingCodeRefs.length ? pendingCodeRefs : undefined
+        pendingCodeRefs.length ? pendingCodeRefs : undefined,
+        backend.approvalMode
       );
       if (pendingCodeRefs.length) setPendingCodeRefs([]);
       // Return to chat page when sending
       setSidebarVisible(false);
       handleCloseFileViewer();
     },
-    [submitPrompt, permissionMode, pendingCodeRefs, handleCloseFileViewer]
+    [submitPrompt, permissionModeUI, provider, pendingCodeRefs, handleCloseFileViewer]
   );
 
   const handleOpenPreviewInApp = useCallback((u: string) => {
@@ -226,6 +267,19 @@ export default function App() {
     setTerminalFullScreen(false);
   }, []);
 
+  const fetchWorkspacePath = useCallback(() => {
+    setWorkspacePathLoading(true);
+    fetch(`${serverConfig.getBaseUrl()}/api/workspace-path`)
+      .then((res) => res.json())
+      .then((data) => setWorkspacePath(data?.path ?? null))
+      .catch(() => setWorkspacePath(null))
+      .finally(() => setWorkspacePathLoading(false));
+  }, [serverConfig]);
+
+  useEffect(() => {
+    if (settingsVisible) fetchWorkspacePath();
+  }, [settingsVisible, fetchWorkspacePath]);
+
   return (
     <ThemeProvider provider={provider}>
     <SafeAreaView style={styles.safeArea}>
@@ -247,22 +301,14 @@ export default function App() {
                 >
                   <Text style={styles.menuButtonText}>☰</Text>
                 </TouchableOpacity>
-                <View style={styles.providerToggle}>
-                  <TouchableOpacity
-                    style={[styles.providerOption, provider === "claude" && styles.providerOptionActive]}
-                    onPress={() => setProvider("claude")}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={[styles.providerOptionText, provider === "claude" && styles.providerOptionTextActive]}>Claude</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.providerOption, provider === "gemini" && styles.providerOptionActive]}
-                    onPress={() => setProvider("gemini")}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={[styles.providerOptionText, provider === "gemini" && styles.providerOptionTextActive]}>Gemini</Text>
-                  </TouchableOpacity>
-                </View>
+                <TouchableOpacity
+                  style={styles.settingsButton}
+                  onPress={() => setSettingsVisible(true)}
+                  activeOpacity={0.7}
+                  accessibilityLabel="Settings"
+                >
+                  <Text style={styles.settingsButtonText}>⚙</Text>
+                </TouchableOpacity>
               </View>
             )}
             <View style={styles.chatShell}>
@@ -349,7 +395,10 @@ export default function App() {
                     <PermissionDenialBanner
                       denials={permissionDenials}
                       onDismiss={dismissPermission}
-                      onAccept={() => retryAfterPermission(permissionMode ?? undefined)}
+                      onAccept={() => {
+                      const backend = getBackendPermissionMode(permissionModeUI, provider);
+                      retryAfterPermission(backend.permissionMode, backend.approvalMode);
+                    }}
                     />
                   )}
                 </>
@@ -394,8 +443,11 @@ export default function App() {
               connected={connected}
               claudeRunning={claudeRunning}
               waitingForUserInput={waitingForUserInput}
-              permissionMode={permissionMode}
-              onPermissionModeChange={setPermissionMode}
+              permissionMode={((): string | null => {
+                const b = getBackendPermissionMode(permissionModeUI, provider);
+                return b.permissionMode ?? b.approvalMode ?? null;
+              })()}
+              onPermissionModeChange={() => {}}
               onSubmit={handleSubmit}
               pendingCodeRefs={pendingCodeRefs}
               onRemoveCodeRef={handleRemoveCodeRef}
@@ -405,6 +457,11 @@ export default function App() {
               onOpenTerminal={() => setTerminalFullScreen(true)}
               onTerminateAgent={terminateAgent}
               onOpenWebPreview={() => setPreviewUrl("")}
+              provider={provider}
+              model={model}
+              modelOptions={modelOptions}
+              onProviderChange={setProviderAndModel}
+              onModelChange={setModel}
             />
           </View>
         </View>
@@ -413,6 +470,28 @@ export default function App() {
           pending={pendingAskQuestion}
           onSubmit={submitAskQuestionAnswer}
           onCancel={dismissAskQuestion}
+        />
+
+        <SettingsModal
+          visible={settingsVisible}
+          onClose={() => setSettingsVisible(false)}
+          provider={provider}
+          setProviderAndModel={setProviderAndModel}
+          model={model}
+          setModel={setModel}
+          modelOptions={modelOptions}
+          permissionMode={permissionModeUI}
+          onPermissionModeChange={setPermissionModeUI}
+          onStopSession={terminateAgent}
+          onNewSession={() => {
+            resetSession();
+            setSettingsVisible(false);
+          }}
+          claudeRunning={claudeRunning}
+          workspacePath={workspacePath}
+          workspaceLoading={workspacePathLoading}
+          onRefreshWorkspace={fetchWorkspacePath}
+          serverBaseUrl={serverConfig.getBaseUrl()}
         />
 
         <PreviewWebViewModal
@@ -677,30 +756,19 @@ function createAppStyles(theme: ReturnType<typeof getTheme>) {
     fontSize: 22,
     color: theme.textPrimary,
   },
-  providerToggle: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-  },
-  providerOption: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    backgroundColor: theme.cardBg,
+  settingsButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "transparent",
     borderWidth: 1,
     borderColor: theme.borderColor,
+    justifyContent: "center",
+    alignItems: "center",
   },
-  providerOptionActive: {
-    backgroundColor: theme.accentLight,
-    borderColor: theme.accent,
-  },
-  providerOptionText: {
-    fontSize: 13,
-    color: theme.textMuted,
-  },
-  providerOptionTextActive: {
-    color: theme.accent,
-    fontWeight: "600",
+  settingsButtonText: {
+    fontSize: 20,
+    color: theme.textPrimary,
   },
   chatShell: {
     flex: 1,

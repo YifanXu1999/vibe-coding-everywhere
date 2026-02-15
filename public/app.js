@@ -19,6 +19,23 @@ const sidebarToggle = document.getElementById("sidebar-toggle");
 /** Current AI provider ("claude" | "gemini"). Sent with each submit-prompt. */
 let currentProvider = "gemini";
 
+/** Model options per provider. Value is sent to CLI --model. */
+const CLAUDE_MODELS = [
+  { value: "haiku", label: "Haiku 4.5" },
+  { value: "sonnet", label: "Sonnet 4.5" },
+  { value: "opus", label: "Opus 4.5" },
+];
+const GEMINI_MODELS = [
+  { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+  { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+  { value: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash Lite" },
+];
+const DEFAULT_CLAUDE_MODEL = "sonnet";
+const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
+
+/** Current model (per provider). Sent with each submit-prompt. */
+let currentModel = DEFAULT_GEMINI_MODEL;
+
 const socket = io();
 
 /* --- Sidebar (VSCode-style file explorer) --- */
@@ -394,6 +411,7 @@ function showPermissionDenialBanner(denials) {
       allowedTools,
       permissionMode,
       provider: currentProvider,
+      model: currentModel,
       retryAfterPermissionDenial: true,
     });
   });
@@ -556,7 +574,7 @@ function submitPrompt() {
   if (claudeRunning) return;
 
   const permissionMode = permissionModeSelect?.value || undefined;
-  socket.emit("submit-prompt", { prompt, permissionMode, provider: currentProvider });
+  socket.emit("submit-prompt", { prompt, permissionMode, provider: currentProvider, model: currentModel });
   addUserMessage(prompt);
   promptInput.value = "";
 }
@@ -610,22 +628,55 @@ setTypingIndicator(false);
 
 initSidebar();
 
+function getModelsForProvider(provider) {
+  return provider === "claude" ? CLAUDE_MODELS : GEMINI_MODELS;
+}
+
 function initProviderSelector() {
   document.body.classList.add(currentProvider === "gemini" ? "provider-gemini" : "provider-claude");
   if (promptInput) promptInput.placeholder = currentProvider === "gemini" ? "Ask Gemini" : DEFAULT_PLACEHOLDER;
-  const container = permissionModeSelect?.parentNode;
+  // Place model selector in the input bar (same row as prompt input), like "Sonnet 4.5 ▼"
+  const container = inputForm || permissionModeSelect?.parentNode;
   if (!container) return;
   const wrap = document.createElement("span");
+  wrap.style.display = "inline-flex";
+  wrap.style.alignItems = "center";
+  wrap.style.gap = "8px";
   wrap.style.marginRight = "8px";
-  wrap.innerHTML = '<label>Provider: <select id="provider-select"><option value="claude">Claude</option><option value="gemini">Gemini</option></select></label>';
-  const sel = wrap.querySelector("#provider-select");
-  sel.value = currentProvider;
-  container.insertBefore(wrap, permissionModeSelect);
-  sel.addEventListener("change", () => {
-    currentProvider = sel.value;
+  wrap.style.flexShrink = "0";
+  wrap.innerHTML =
+    '<label class="input-bar-label">Provider: <select id="provider-select"><option value="claude">Claude</option><option value="gemini">Gemini</option></select></label>' +
+    '<label class="input-bar-label">Model: <select id="model-select"></select></label>';
+  const providerSel = wrap.querySelector("#provider-select");
+  const modelSel = wrap.querySelector("#model-select");
+  providerSel.value = currentProvider;
+
+  function updateModelOptions() {
+    const models = getModelsForProvider(currentProvider);
+    const defaultModel = currentProvider === "claude" ? DEFAULT_CLAUDE_MODEL : DEFAULT_GEMINI_MODEL;
+    const validValues = models.map((m) => m.value);
+    if (!validValues.includes(currentModel)) {
+      currentModel = defaultModel;
+    }
+    modelSel.innerHTML = models.map((m) => `<option value="${m.value}">${m.label}</option>`).join("");
+    modelSel.value = currentModel;
+  }
+
+  updateModelOptions();
+  // Insert at start of input form so user selects model from the input bar (e.g. "Sonnet 4.5 ▼")
+  container.insertBefore(wrap, container.firstChild);
+
+  providerSel.addEventListener("change", () => {
+    currentProvider = providerSel.value;
+    currentModel = currentProvider === "claude" ? DEFAULT_CLAUDE_MODEL : DEFAULT_GEMINI_MODEL;
+    updateModelOptions();
     document.body.classList.remove("provider-claude", "provider-gemini");
     document.body.classList.add(currentProvider === "gemini" ? "provider-gemini" : "provider-claude");
     if (promptInput) promptInput.placeholder = currentProvider === "gemini" ? "Ask Gemini" : DEFAULT_PLACEHOLDER;
+  });
+
+  modelSel.addEventListener("change", () => {
+    currentModel = modelSel.value;
   });
 }
 initProviderSelector();

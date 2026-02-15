@@ -8,6 +8,8 @@ import {
   KeyboardAvoidingView,
   Platform,
   Image,
+  Modal,
+  ScrollView,
 } from "react-native";
 import Svg, { Path } from "react-native-svg";
 import { useTheme } from "../../theme/index";
@@ -58,6 +60,16 @@ export interface InputPanelProps {
   onTerminateAgent?: () => void;
   /** Open web preview modal. */
   onOpenWebPreview?: () => void;
+  /** Current AI provider (for model selector in input bar). */
+  provider?: "claude" | "gemini";
+  /** Current model value (e.g. "sonnet", "gemini-2.5-flash"). */
+  model?: string;
+  /** Model options for current provider: { value, label }[]. */
+  modelOptions?: { value: string; label: string }[];
+  /** Called when user switches provider (resets model to default). */
+  onProviderChange?: (provider: "claude" | "gemini") => void;
+  /** Called when user selects a model. */
+  onModelChange?: (model: string) => void;
 }
 
 export function InputPanel({
@@ -75,9 +87,17 @@ export function InputPanel({
   onOpenTerminal,
   onTerminateAgent,
   onOpenWebPreview,
+  provider = "gemini",
+  model = "gemini-2.5-flash",
+  modelOptions = [],
+  onProviderChange,
+  onModelChange,
 }: InputPanelProps) {
   const theme = useTheme();
   const [prompt, setPrompt] = useState("");
+  const [modelPickerVisible, setModelPickerVisible] = useState(false);
+
+  const currentModelLabel = modelOptions.find((m) => m.value === model)?.label ?? model;
 
   const disabled = !waitingForUserInput && claudeRunning;
   const placeholder = waitingForUserInput ? INPUT_PLACEHOLDER : DEFAULT_PLACEHOLDER;
@@ -141,10 +161,15 @@ export function InputPanel({
           <TouchableOpacity style={styles.btnAttach} activeOpacity={0.8}>
             <Text style={styles.btnAttachText}>+</Text>
           </TouchableOpacity>
-          <View style={styles.modelSelector}>
-            <Text style={styles.modelName}>Sonnet 4.5</Text>
+          <TouchableOpacity
+            style={styles.modelSelector}
+            onPress={() => (onProviderChange || onModelChange ? setModelPickerVisible(true) : null)}
+            activeOpacity={0.8}
+            disabled={!onProviderChange && !onModelChange}
+          >
+            <Text style={styles.modelName}>{currentModelLabel}</Text>
             <Text style={styles.chevron}>▼</Text>
-          </View>
+          </TouchableOpacity>
           {onOpenWebPreview && (
             <TouchableOpacity
               style={styles.btnWebPreview}
@@ -190,6 +215,55 @@ export function InputPanel({
           </TouchableOpacity>
         </View>
       </View>
+
+      <Modal
+        visible={modelPickerVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setModelPickerVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.modelPickerBackdrop}
+          activeOpacity={1}
+          onPress={() => setModelPickerVisible(false)}
+        >
+          <View style={styles.modelPickerCard} onStartShouldSetResponder={() => true}>
+            <Text style={styles.modelPickerTitle}>Provider</Text>
+            <View style={styles.modelPickerProviderRow}>
+              <TouchableOpacity
+                style={[styles.modelPickerProviderBtn, provider === "claude" && styles.modelPickerProviderBtnActive]}
+                onPress={() => onProviderChange?.("claude")}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.modelPickerProviderText, provider === "claude" && styles.modelPickerProviderTextActive]}>Claude</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modelPickerProviderBtn, provider === "gemini" && styles.modelPickerProviderBtnActive]}
+                onPress={() => onProviderChange?.("gemini")}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.modelPickerProviderText, provider === "gemini" && styles.modelPickerProviderTextActive]}>Gemini</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.modelPickerTitle}>Model</Text>
+            <ScrollView style={styles.modelPickerList} keyboardShouldPersistTaps="handled">
+              {modelOptions.map((opt) => (
+                <TouchableOpacity
+                  key={opt.value}
+                  style={[styles.modelPickerOption, model === opt.value && styles.modelPickerOptionActive]}
+                  onPress={() => {
+                    onModelChange?.(opt.value);
+                    setModelPickerVisible(false);
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.modelPickerOptionText, model === opt.value && styles.modelPickerOptionTextActive]}>{opt.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -290,6 +364,78 @@ function createInputPanelStyles(theme: ReturnType<typeof useTheme>) {
   chevron: {
     fontSize: 10,
     color: theme.textMuted,
+  },
+  modelPickerBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+  },
+  modelPickerCard: {
+    width: "100%",
+    maxWidth: 320,
+    maxHeight: "80%",
+    backgroundColor: theme.surfaceBg,
+    borderRadius: 16,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: theme.borderColor,
+  },
+  modelPickerTitle: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: theme.textMuted,
+    marginBottom: 8,
+  },
+  modelPickerProviderRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 16,
+  },
+  modelPickerProviderBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    backgroundColor: theme.cardBg,
+    borderWidth: 1,
+    borderColor: theme.borderColor,
+  },
+  modelPickerProviderBtnActive: {
+    backgroundColor: theme.accentLight ?? "#e8f0fe",
+    borderColor: theme.accent ?? "#1a73e8",
+  },
+  modelPickerProviderText: {
+    fontSize: 15,
+    color: theme.textMuted,
+  },
+  modelPickerProviderTextActive: {
+    color: theme.accent ?? "#1a73e8",
+    fontWeight: "600",
+  },
+  modelPickerList: {
+    maxHeight: 220,
+  },
+  modelPickerOption: {
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    marginBottom: 6,
+    backgroundColor: theme.cardBg,
+    borderWidth: 1,
+    borderColor: "transparent",
+  },
+  modelPickerOptionActive: {
+    backgroundColor: theme.accentLight ?? "#e8f0fe",
+    borderColor: theme.accent ?? "#1a73e8",
+  },
+  modelPickerOptionText: {
+    fontSize: 15,
+    color: theme.textPrimary,
+  },
+  modelPickerOptionTextActive: {
+    color: theme.accent ?? "#1a73e8",
+    fontWeight: "600",
   },
   btnWebPreview: {
     width: 36,

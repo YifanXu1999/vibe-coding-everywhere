@@ -62,6 +62,8 @@ export interface UseSocketOptions {
   serverConfig?: IServerConfig;
   /** AI provider for submit-prompt ("claude" | "gemini"). */
   provider?: Provider;
+  /** Model ID for submit-prompt (e.g. "sonnet", "gemini-2.5-flash"). Defaults by provider. */
+  model?: string;
 }
 
 /**
@@ -75,6 +77,8 @@ export function useSocket(options: UseSocketOptions = {}) {
   const serverConfig = options.serverConfig ?? getDefaultServerConfig();
   const serverUrl = serverConfig.getBaseUrl();
   const provider = options.provider ?? "gemini";
+  const defaultModel = provider === "claude" ? "sonnet" : "gemini-2.5-flash";
+  const model = options.model ?? defaultModel;
 
   // ===== Connection State =====
   const [connected, setConnected] = useState(false);
@@ -408,14 +412,15 @@ export function useSocket(options: UseSocketOptions = {}) {
   // ===== Action Handlers =====
 
   /**
-   * Submit a prompt to Claude.
+   * Submit a prompt to Claude/Gemini.
    * @param prompt - The user prompt
-   * @param permissionMode - Optional permission mode override
+   * @param permissionMode - Optional Claude permission mode
    * @param allowedTools - Optional allowed tools list
    * @param codeRefs - Optional code references to include
+   * @param approvalMode - Optional Gemini approval mode
    */
   const submitPrompt = useCallback(
-    (prompt: string, permissionMode?: string, allowedTools?: string[], codeRefs?: CodeRefPayload[]) => {
+    (prompt: string, permissionMode?: string, allowedTools?: string[], codeRefs?: CodeRefPayload[], approvalMode?: string) => {
       if (!socketRef.current) return;
       
       // Build full prompt with code references if provided
@@ -432,6 +437,8 @@ export function useSocket(options: UseSocketOptions = {}) {
         permissionMode,
         allowedTools,
         provider,
+        model,
+        approvalMode,
       });
       
       // Add user message to chat
@@ -443,7 +450,7 @@ export function useSocket(options: UseSocketOptions = {}) {
       renderTerminalIdRef.current = null;
       setLastSessionTerminated(false);
     },
-    [addMessage, provider]
+    [addMessage, provider, model]
   );
 
   /**
@@ -476,10 +483,11 @@ export function useSocket(options: UseSocketOptions = {}) {
 
   /**
    * Retry after permission denial with updated permissions.
-   * @param permissionMode - New permission mode
+   * @param permissionMode - New Claude permission mode
+   * @param approvalMode - New Gemini approval mode
    */
   const retryAfterPermission = useCallback(
-    (permissionMode?: string) => {
+    (permissionMode?: string, approvalMode?: string) => {
       if (!socketRef.current) return;
       
       const denials = permissionDenials ?? [];
@@ -488,14 +496,16 @@ export function useSocket(options: UseSocketOptions = {}) {
       socketRef.current.emit("submit-prompt", {
         prompt: "", // Empty prompt to continue
         permissionMode: permissionMode ?? lastRunOptions.permissionMode ?? undefined,
+        approvalMode,
         allowedTools,
         replaceRunning: true,
         provider,
+        model,
       });
       
       setPermissionDenials(null);
     },
-    [permissionDenials, lastRunOptions, provider]
+    [permissionDenials, lastRunOptions, provider, model]
   );
 
   /**
@@ -562,6 +572,23 @@ export function useSocket(options: UseSocketOptions = {}) {
     setLastSessionTerminated(true);
   }, []);
 
+  /**
+   * New session: clear chat and reset permission state; optionally terminate running agent.
+   */
+  const resetSession = useCallback(() => {
+    if (socketRef.current) socketRef.current.emit("claude-terminate");
+    setMessages([]);
+    setPermissionDenials(null);
+    setLastRunOptions({ permissionMode: null, allowedTools: [], useContinue: false });
+    setPendingRender(null);
+    setPendingAskQuestion(null);
+    setHasRunCommandForCurrentRender(false);
+    setRenderTerminalId(null);
+    renderTerminalIdRef.current = null;
+    setLastSessionTerminated(false);
+    currentAssistantContentRef.current = "";
+  }, []);
+
   // Compute whether user can run commands in selected terminal
   const canRunInSelectedTerminal = selectedTerminalId
     ? terminals.find((t) => t.id === selectedTerminalId)?.active ?? false
@@ -618,5 +645,6 @@ export function useSocket(options: UseSocketOptions = {}) {
     runUserCommand,
     terminateRunProcess,
     terminateAgent,
+    resetSession,
   };
 }

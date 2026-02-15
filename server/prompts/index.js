@@ -3,7 +3,7 @@
  */
 import fs from "fs";
 import path from "path";
-import { PROMPTS_DIR, WORKSPACE_CWD } from "../config/index.js";
+import { PROMPTS_DIR, getWorkspaceCwd } from "../config/index.js";
 import { getFormattedAccessRestrictionPrompt } from "../../prompts/access-restriction/formatAccessRestrictionPrompt.js";
 import { getPreviewHost } from "../utils/index.js";
 
@@ -82,7 +82,7 @@ export function getExistingPromptBody(folderName) {
     let content = readPromptFile(folderName, name);
     if (!content) continue;
     if (folderName === "access-restriction" && name.endsWith(".md")) {
-      content = getFormattedAccessRestrictionPrompt(WORKSPACE_CWD, { promptContent: content });
+      content = getFormattedAccessRestrictionPrompt(getWorkspaceCwd(), { promptContent: content });
     }
     if (content) parts.push(content);
   }

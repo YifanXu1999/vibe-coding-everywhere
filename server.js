@@ -12,6 +12,7 @@ import { setupRoutes } from "./server/routes/index.js";
 import { setupSocketHandlers } from "./server/socket/index.js";
 
 const app = express();
+app.use(express.json());
 const httpServer = createServer(app);
 
 // Setup Express routes

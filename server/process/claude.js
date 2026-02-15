@@ -10,6 +10,7 @@ export const claudeConfig = {
     "--output-format",
     "stream-json",
     "--verbose",
+    ...(opts.model ? ["--model", opts.model] : []),
     ...(opts.appendSystemPrompt ? ["--append-system-prompt", opts.appendSystemPrompt] : []),
     ...(opts.useContinue ? ["-c"] : []),
     ...(opts.permissionMode ? ["--permission-mode", opts.permissionMode] : []),
