@@ -99,7 +99,7 @@ export const WORKSPACE_CWD = currentWorkspaceCwd;
 // File tree refresh interval for sidebar (milliseconds)
 export const SIDEBAR_REFRESH_INTERVAL_MS = parseInt(process.env.SIDEBAR_REFRESH_INTERVAL_MS || "3000", 10) || 3000;
 
-// Default Claude permission mode (bypassPermissions, acceptPermissions, etc.)
+// Default Claude permission mode (default, acceptEdits, bypassPermissions, etc.)
 export const DEFAULT_PERMISSION_MODE = process.env.DEFAULT_PERMISSION_MODE || "bypassPermissions";
 
 // AI provider: "claude" or "gemini"
@@ -143,6 +143,48 @@ const LOG_TIMESTAMP = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19
 export function getProviderLogPath(provider = "claude") {
   const dir = path.join(resolveLogDir(), provider);
   return path.join(dir, `${provider}-output-${LOG_TIMESTAMP}.log`);
+}
+
+/** Base directory for LLM CLI input/output debug logs. */
+export const LLM_CLI_IO_LOG_DIR = path.join(resolveLogDir(), "llm-cli-input-output");
+
+/** Run-specific directory: llm-cli-input-output/{timestamp}. Created on server start. */
+export const LLM_CLI_IO_RUN_DIR = path.join(LLM_CLI_IO_LOG_DIR, LOG_TIMESTAMP);
+
+/**
+ * Ensure the run directory (timestamp folder) exists. Call on server start.
+ */
+export function ensureLlmCliIoRunDir() {
+  try {
+    if (!fs.existsSync(LLM_CLI_IO_RUN_DIR)) {
+      fs.mkdirSync(LLM_CLI_IO_RUN_DIR, { recursive: true });
+    }
+  } catch (err) {
+    console.warn("[llm-cli-io] Failed to create run dir:", err?.message);
+  }
+}
+
+/**
+ * Get paths for a conversation turn's input.log and output.log.
+ * Creates dirs: {run}/{provider}-{sessionId}/{turnId}/
+ * @param {string} provider - "claude" or "gemini"
+ * @param {string} sessionId - session log dir name (e.g. yyyy-MM-dd_HH-mm-ss timestamp)
+ * @param {string|number} turnId - conversation turn id
+ * @returns {{ inputPath: string; outputPath: string; turnDir: string }}
+ */
+export function getLlmCliIoTurnPaths(provider, sessionId, turnId) {
+  const sessionDir = path.join(LLM_CLI_IO_RUN_DIR, `${provider}-${sessionId}`);
+  const turnDir = path.join(sessionDir, String(turnId));
+  try {
+    fs.mkdirSync(turnDir, { recursive: true });
+  } catch (err) {
+    console.warn("[llm-cli-io] Failed to create turn dir:", err?.message);
+  }
+  return {
+    inputPath: path.join(turnDir, "input.log"),
+    outputPath: path.join(turnDir, "output.log"),
+    turnDir,
+  };
 }
 
 /** @deprecated Use getProviderLogPath(provider) instead. Kept for backward compatibility. */

@@ -9,6 +9,7 @@ export { formatToolUseForDisplay } from "./types";
 export {
   stripAnsi,
   filterBashNoise,
+  stripCommandStyleTags,
   stripTrailingIncompleteTag,
   extractRenderCommandAndUrl,
   isAskUserQuestionPayload,

@@ -79,7 +79,7 @@ function App() {
 
 #### Providers
 
-- `gemini` - Purple accent (#7c3aed)
+- `gemini` - Google Blue accent (#1a73e8)
 - `claude` - Orange accent (#b3541e)
 
 #### Color Modes

@@ -16,7 +16,11 @@ export function registerClaudeHandlers(
   /** Claude CLI sends "system" at session start. */
   registry.set("system", (data) => {
     const info: string[] = [];
-    if (data.session_id) info.push(`Session ID: ${data.session_id}`);
+    if (data.session_id != null && data.session_id !== "") {
+      const id = String(data.session_id);
+      info.push(`Session ID: ${id}`);
+      ctx.setSessionId?.(id);
+    }
     if (data.model) {
       ctx.setModelName(String(data.model));
       info.push(`Model: ${data.model}`);

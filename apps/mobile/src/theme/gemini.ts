@@ -1,6 +1,6 @@
 export const geminiTheme = {
-  accent: "#7c3aed",
-  accentSoft: "#e6dbff",
-  accentMuted: "#ede9fe",
-  accentOnDark: "#c4b5fd",
+  accent: "#1a73e8",
+  accentSoft: "#e8f0fe",
+  accentMuted: "#d2e3fc",
+  accentOnDark: "#8ab4f8",
 } as const;

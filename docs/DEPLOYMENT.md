@@ -262,7 +262,7 @@ export $(grep -v '^#' .env | xargs)
 DEFAULT_PERMISSION_MODE=bypassPermissions
 
 # For restrictive environments  
-DEFAULT_PERMISSION_MODE=acceptPermissions
+DEFAULT_PERMISSION_MODE=acceptEdits
 ```
 
 **Provider selection and Gemini approval:**

@@ -43,6 +43,7 @@ import {
   triggerHaptic,
   EntranceAnimation,
   usePerformanceMonitor,
+  spacing,
 } from "./src/design-system";
 
 // Service Imports
@@ -107,13 +108,44 @@ function getBackendPermissionMode(
   }
   if (ui === "always_ask") {
     return provider === "claude"
-      ? { permissionMode: "acceptPermissions" }
+      ? { permissionMode: "acceptEdits" }
       : { approvalMode: "plan" };
   }
-  // ask_once_per_session
+  // ask_once_per_session: Claude "default" = prompts on first use of each tool per session
   return provider === "claude"
-    ? { permissionMode: "acceptPermissions" }
+    ? { permissionMode: "default" }
     : { approvalMode: "default" };
+}
+
+function normalizePathSeparators(input: string): string {
+  return input.replace(/\\/g, "/");
+}
+
+function isAbsolutePath(input: string): boolean {
+  const p = normalizePathSeparators(input.trim());
+  return p.startsWith("/") || /^[A-Za-z]:\//.test(p);
+}
+
+function dirnamePath(input: string): string {
+  const p = normalizePathSeparators(input).replace(/\/+$/, "");
+  const idx = p.lastIndexOf("/");
+  if (idx <= 0) return p.startsWith("/") ? "/" : ".";
+  return p.slice(0, idx);
+}
+
+function basenamePath(input: string): string {
+  const p = normalizePathSeparators(input).replace(/\/+$/, "");
+  const idx = p.lastIndexOf("/");
+  return idx >= 0 ? p.slice(idx + 1) : p;
+}
+
+function toWorkspaceRelativePath(inputPath: string, workspaceRoot: string): string | null {
+  const file = normalizePathSeparators(inputPath).trim();
+  const root = normalizePathSeparators(workspaceRoot).replace(/\/$/, "");
+  if (!file || !root) return null;
+  if (file === root) return "";
+  if (!file.startsWith(root + "/")) return null;
+  return file.slice(root.length + 1);
 }
 
 // ============================================================================
@@ -128,8 +160,6 @@ interface HeaderButtonProps {
 }
 
 function HeaderButton({ icon, onPress, accessibilityLabel, delay = 0 }: HeaderButtonProps) {
-  const theme = useTheme();
-
   return (
     <EntranceAnimation variant="scale" delay={delay}>
       <AnimatedPressableView
@@ -142,21 +172,8 @@ function HeaderButton({ icon, onPress, accessibilityLabel, delay = 0 }: HeaderBu
         style={{
           width: 40,
           height: 40,
-          borderRadius: 20,
-          backgroundColor: theme.colors.surface,
-          borderWidth: 1,
-          borderColor: theme.colors.border,
           justifyContent: "center",
           alignItems: "center",
-          ...Platform.select({
-            ios: {
-              shadowColor: theme.colors.shadow,
-              shadowOffset: { width: 0, height: 2 },
-              shadowOpacity: 0.1,
-              shadowRadius: 4,
-            },
-            android: { elevation: 2 },
-          }),
         }}
         accessibilityLabel={accessibilityLabel}
       >
@@ -198,7 +215,8 @@ export default function App() {
   // Permission Mode State
   const defaultPermissionModeUI: PermissionModeUI =
     typeof process !== "undefined" &&
-    process.env?.EXPO_PUBLIC_DEFAULT_PERMISSION_MODE === "acceptPermissions"
+  (process.env?.EXPO_PUBLIC_DEFAULT_PERMISSION_MODE === "acceptEdits" ||
+    process.env?.EXPO_PUBLIC_DEFAULT_PERMISSION_MODE === "acceptPermissions")
       ? "always_ask"
       : "yolo";
   
@@ -239,6 +257,7 @@ export default function App() {
     claudeRunning,
     waitingForUserInput,
     typingIndicator,
+    sessionId,
     pendingRender,
     permissionDenials,
     runRenderResult,
@@ -319,6 +338,56 @@ export default function App() {
     triggerHaptic("selection");
     setSelectedFilePath(path);
   }, []);
+
+  /** When user taps a file in chat, open explorer and ensure file path is readable by workspace API. */
+  const handleFileSelectFromChat = useCallback((path: string) => {
+    triggerHaptic("selection");
+    setSidebarVisible(true);
+    void (async () => {
+      const raw = typeof path === "string" ? path.trim() : "";
+      if (!raw) return;
+      const normalized = normalizePathSeparators(raw);
+
+      // Relative path: directly open in current workspace.
+      if (!isAbsolutePath(normalized)) {
+        setSelectedFilePath(normalized.replace(/^\/+/, ""));
+        return;
+      }
+
+      try {
+        const baseUrl = serverConfig.getBaseUrl();
+        const wsRes = await fetch(`${baseUrl}/api/workspace-path`);
+        const wsData = (await wsRes.json()) as { path?: string };
+        if (typeof wsData?.path === "string") {
+          setWorkspacePath(wsData.path);
+          const rel = toWorkspaceRelativePath(normalized, wsData.path);
+          if (rel != null) {
+            setSelectedFilePath(rel || basenamePath(normalized));
+            return;
+          }
+        }
+
+        // Absolute path outside current workspace: switch workspace to file directory first.
+        const targetWorkspace = dirnamePath(normalized);
+        const switchRes = await fetch(`${baseUrl}/api/workspace-path`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: targetWorkspace }),
+        });
+        if (switchRes.ok) {
+          const switched = (await switchRes.json()) as { path?: string };
+          if (typeof switched?.path === "string") setWorkspacePath(switched.path);
+          setSelectedFilePath(basenamePath(normalized));
+          return;
+        }
+      } catch {
+        // Fall back below.
+      }
+
+      // Last fallback: keep original path (may still fail if server rejects it).
+      setSelectedFilePath(normalized);
+    })();
+  }, [serverConfig]);
 
   const handleCloseFileViewer = useCallback(() => {
     setSelectedFilePath(null);
@@ -420,7 +489,7 @@ export default function App() {
           <View style={styles.page}>
             {/* Main Content Area */}
             <View style={styles.contentArea}>
-              {/* Header Buttons */}
+              {/* Header: Menu (left) | Session ID (center) | Settings (right) */}
               {!sidebarVisible && (
                 <View style={styles.menuButtonOverlay} pointerEvents="box-none">
                   <HeaderButton
@@ -429,6 +498,15 @@ export default function App() {
                     accessibilityLabel="Open Explorer"
                     delay={100}
                   />
+                  <View style={styles.sessionIdCenter} pointerEvents="none">
+                    <Text
+                      style={styles.sessionIdText}
+                      numberOfLines={1}
+                      accessibilityLabel={sessionId != null ? `Session ${sessionId}` : "No session"}
+                    >
+                      {sessionId != null ? `Session: ${sessionId.split("-")[0] ?? sessionId}` : "Start a new conversation"}
+                    </Text>
+                  </View>
                   <HeaderButton
                     icon={<SettingsIcon color={theme.colors.textPrimary} />}
                     onPress={() => setSettingsVisible(true)}
@@ -465,14 +543,16 @@ export default function App() {
                         isTerminatedLabel={showTerminated}
                         showAsTailBox={showTailBox}
                         tailBoxMaxHeight={Dimensions.get("window").height * 0.5}
+                        provider={provider}
                         onRunBashCommand={runCommandInNewTerminal}
                         onOpenUrl={handleOpenPreviewInApp}
+                        onFileSelect={handleFileSelectFromChat}
                       />
                     );
                   }}
                   ListFooterComponent={
                     <>
-                      <TypingIndicator visible={typingIndicator} />
+                      <TypingIndicator visible={typingIndicator} provider={provider} />
                       
                       {runRenderResult && (
                         <View style={styles.runResult}>
@@ -506,11 +586,7 @@ export default function App() {
                                 : []
                             }
                             title="Terminal"
-                            command={
-                              renderTerminalId
-                                ? terminals.find((t) => t.id === renderTerminalId)?.lastCommand ?? null
-                                : null
-                            }
+                            showCommand={false}
                             showWhenEmpty
                             onTerminate={
                               renderTerminalId
@@ -884,12 +960,26 @@ function createAppStyles(theme: ReturnType<typeof getTheme>) {
       bottom: 0,
       zIndex: 6,
     },
+    sessionIdCenter: {
+      flex: 1,
+      justifyContent: "center",
+      alignItems: "center",
+      paddingHorizontal: spacing[1],
+      minHeight: 40,
+    },
+    sessionIdText: {
+      fontSize: 11,
+      fontWeight: "500",
+      letterSpacing: 0.3,
+      textAlign: "center",
+      color: "#1f2937",
+    },
     menuButtonOverlay: {
       position: "absolute",
       top: -8,
       left: 0,
       right: 0,
-      height: 56,
+      height: 44,
       zIndex: 10,
       flexDirection: "row",
       alignItems: "center",

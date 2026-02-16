@@ -89,6 +89,9 @@ export function useSocket(options: UseSocketOptions = {}) {
   const [waitingForUserInput, setWaitingForUserInput] = useState(false);
   const [typingIndicator, setTypingIndicator] = useState(false);
   
+  // ===== Session (server session_id for Claude; shown in UI) =====
+  const [sessionId, setSessionId] = useState<string | null>(null);
+
   // ===== Permission State =====
   const [permissionDenials, setPermissionDenials] = useState<PermissionDenial[] | null>(null);
   const [lastRunOptions, setLastRunOptions] = useState<LastRunOptions>({
@@ -267,16 +270,20 @@ export function useSocket(options: UseSocketOptions = {}) {
     });
 
     // Claude session events
-    socket.on("claude-started", (data) => {
+    socket.on("claude-started", (data: Record<string, unknown>) => {
       console.log("[claude-started]", data);
       setClaudeRunning(true);
       setTypingIndicator(true);
       setWaitingForUserInput(false);
       setLastSessionTerminated(false);
+      const raw = data?.session_id ?? data?.sessionId;
+      const id =
+        raw != null && raw !== "" ? String(raw) : null;
+      setSessionId(id);
       setLastRunOptions({
-        permissionMode: data.permissionMode ?? null,
-        allowedTools: data.allowedTools ?? [],
-        useContinue: data.useContinue ?? false,
+        permissionMode: (data?.permissionMode as string | null) ?? null,
+        allowedTools: (Array.isArray(data?.allowedTools) ? data.allowedTools : []) as string[],
+        useContinue: Boolean(data?.useContinue),
       });
     });
 
@@ -315,12 +322,42 @@ export function useSocket(options: UseSocketOptions = {}) {
               recordToolUse,
               getAndClearToolUse,
               addPermissionDenial,
+              setSessionId,
             });
             dispatcher(parsed);
           } else {
             appendAssistantText(clean + "\n");
           }
         } catch {
+          // PTY sometimes injects "<u" before a JSON line (terminal underline escape), producing "<u{...}".
+          // Salvage: parse from first "{" so we dispatch the event instead of appending garbage.
+          const jsonStart = clean.indexOf("{");
+          if (clean.startsWith("<u") && jsonStart > 0) {
+            try {
+              const parsed = JSON.parse(clean.slice(jsonStart));
+              if (isProviderStream(parsed)) {
+                const dispatcher = createEventDispatcher({
+                  setPermissionDenials: (d) => setPermissionDenials(d ? deduplicateDenials(d) : null),
+                  setPendingRender,
+                  setModelName,
+                  setWaitingForUserInput,
+                  setPendingAskQuestion,
+                  addMessage,
+                  appendAssistantText,
+                  getCurrentAssistantContent: () => currentAssistantContentRef.current,
+                  deduplicateDenials,
+                  recordToolUse,
+                  getAndClearToolUse,
+                  addPermissionDenial,
+                  setSessionId,
+                });
+                dispatcher(parsed);
+                continue;
+              }
+            } catch {
+              // fall through to append as text
+            }
+          }
           // Not JSON - treat as plain text output
           appendAssistantText(clean + "\n");
         }
@@ -333,6 +370,7 @@ export function useSocket(options: UseSocketOptions = {}) {
       setClaudeRunning(false);
       setTypingIndicator(false);
       setWaitingForUserInput(false);
+      // Keep sessionId so UI can still show it until next session starts
       finalizeAssistantMessage();
       
       if (exitCode !== 0) {
@@ -372,15 +410,16 @@ export function useSocket(options: UseSocketOptions = {}) {
     });
 
     socket.on("run-render-stderr", ({ terminalId, chunk }: { terminalId: string; chunk: string }) => {
+      const cleaned = stripTrailingIncompleteTag(stripAnsi(chunk));
+      if (!cleaned) return;
       setTerminals((prev) => {
         const idx = prev.findIndex((t) => t.id === terminalId);
         if (idx === -1) return prev;
         const next = [...prev];
-        next[idx] = { ...next[idx], lines: [...next[idx].lines, { type: "stderr", text: chunk }] };
+        next[idx] = { ...next[idx], lines: [...next[idx].lines, { type: "stderr", text: cleaned }] };
         return next;
       });
-      
-      setRunOutputLines((prev) => [...prev, { type: "stderr", text: chunk }]);
+      setRunOutputLines((prev) => [...prev, { type: "stderr", text: cleaned }]);
     });
 
     socket.on("run-render-exit", ({ terminalId, code }: { terminalId: string; code: number | null }) => {
@@ -576,8 +615,9 @@ export function useSocket(options: UseSocketOptions = {}) {
    * New session: clear chat and reset permission state; optionally terminate running agent.
    */
   const resetSession = useCallback(() => {
-    if (socketRef.current) socketRef.current.emit("claude-terminate");
+    if (socketRef.current) socketRef.current.emit("claude-terminate", { resetSession: true });
     setMessages([]);
+    setSessionId(null);
     setPermissionDenials(null);
     setLastRunOptions({ permissionMode: null, allowedTools: [], useContinue: false });
     setPendingRender(null);
@@ -632,8 +672,9 @@ export function useSocket(options: UseSocketOptions = {}) {
     setSelectedSequence,
     
     // Session tracking
+    sessionId,
     lastSessionTerminated,
-    
+
     // Actions
     submitPrompt,
     submitAskQuestionAnswer,

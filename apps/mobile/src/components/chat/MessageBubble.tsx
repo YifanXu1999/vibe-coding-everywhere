@@ -1,8 +1,11 @@
-import React, { useMemo, useRef, useEffect } from "react";
+import React, { useMemo, useRef, useEffect, useCallback } from "react";
 import { View, Text, StyleSheet, Linking, Pressable, Alert, ScrollView } from "react-native";
 import Markdown from "react-native-markdown-display";
 import { useTheme } from "../../theme/index";
 import type { Message } from "../../services/socket/hooks";
+import { stripTrailingIncompleteTag } from "../../services/providers/stream";
+import { PlayIcon } from "../icons/ChatActionIcons";
+import { GeminiIcon, ClaudeIcon } from "../icons/ProviderIcons";
 
 function getFileName(path: string): string {
   const parts = path.replace(/\/$/, "").split(/[/\\]/);
@@ -19,6 +22,30 @@ const URL_REGEX = /https?:\/\/[^\s\]\)\}\"']+?(?=[,;)\]}\s]|$)/g;
 
 const LINK_PLACEHOLDER_PREFIX = "\u200B\u200BLINK";
 const LINK_PLACEHOLDER_SUFFIX = "\u200B\u200B";
+const FILE_ACTIVITY_LINK_REGEX = /^(📝\s*Writing|✏️\s*Editing|📖\s*Reading)\s+\[([^\]]+)\]\(file:([^)]+)\)\s*$/;
+
+type FileActivitySegment =
+  | { kind: "file"; prefix: string; fileName: string; path: string }
+  | { kind: "text"; text: string };
+
+function parseFileActivitySegments(content: string): FileActivitySegment[] {
+  const lines = content.split(/\r?\n/);
+  return lines.map((line) => {
+    const match = line.match(FILE_ACTIVITY_LINK_REGEX);
+    if (!match) return { kind: "text", text: line };
+    const prefix = match[1] ?? "";
+    const rawName = (match[2] ?? "").trim();
+    const fileName = rawName.replace(/^`(.+)`$/, "$1");
+    const encodedPath = (match[3] ?? "").trim();
+    let path = encodedPath;
+    try {
+      path = decodeURIComponent(encodedPath);
+    } catch {
+      // Keep original path when decode fails for malformed legacy links.
+    }
+    return { kind: "file", prefix, fileName, path };
+  });
+}
 
 /** Wrap bare URLs in markdown link syntax so they render underlined and tappable. Preserves existing [text](url) links. */
 function wrapBareUrlsInMarkdown(content: string): string {
@@ -56,14 +83,22 @@ interface MessageBubbleProps {
   showAsTailBox?: boolean;
   /** Max height for the tail box (e.g. half screen). Only used when showAsTailBox is true. */
   tailBoxMaxHeight?: number;
+  /** AI provider for assistant messages; shows Gemini or Claude icon when set. */
+  provider?: "claude" | "gemini";
   /** When provided, bash code blocks are tappable; user can choose to run the command in a new terminal. */
   onRunBashCommand?: (command: string) => void;
   /** When provided, links (including bare URLs) open in the app's internal browser instead of external. */
   onOpenUrl?: (url: string) => void;
+  /** When provided, file: links (from Writing/Editing/Reading) open the file in explorer. */
+  onFileSelect?: (path: string) => void;
 }
 
-export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailBoxMaxHeight = 360, onRunBashCommand, onOpenUrl }: MessageBubbleProps) {
+export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailBoxMaxHeight = 360, provider, onRunBashCommand, onOpenUrl, onFileSelect }: MessageBubbleProps) {
   const theme = useTheme();
+  const useWarmTone = provider === "claude";
+  const codeBlockBg = useWarmTone ? "#f0ebe4" : theme.surfaceBg;
+  const quoteBg = useWarmTone ? "#f5f0ea" : theme.cardBg;
+  const bashHeaderBg = useWarmTone ? "#e8e2da" : theme.surfaceBg;
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
   const refs = message.codeReferences ?? [];
@@ -80,33 +115,38 @@ export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailB
       heading5: { fontSize: 14 },
       heading6: { fontSize: 13 },
       link: { color: theme.accent, textDecorationLine: "underline" as const },
-      code_inline: { backgroundColor: "#f0ebe4", color: theme.textPrimary },
-      code_block: { backgroundColor: "#f0ebe4", color: theme.textPrimary },
-      fence: { backgroundColor: "#f0ebe4", color: theme.textPrimary },
-      blockquote: { backgroundColor: "#f5f0ea", borderColor: theme.borderColor },
+      code_inline: { backgroundColor: codeBlockBg, color: theme.textPrimary },
+      code_block: { backgroundColor: codeBlockBg, color: theme.textPrimary },
+      fence: { backgroundColor: codeBlockBg, color: theme.textPrimary },
+      blockquote: { backgroundColor: quoteBg, borderColor: theme.borderColor },
     }),
-    [theme]
+    [theme, codeBlockBg, quoteBg]
   );
   const styles = useMemo(
     () =>
       StyleSheet.create({
         row: { flexDirection: "row" as const, alignItems: "flex-start", gap: 14 },
         rowUser: { flexDirection: "row" as const, justifyContent: "flex-end" },
+        providerIconWrap: { width: 24, height: 24 },
         bubble: {
           paddingVertical: 16,
           paddingHorizontal: 18,
           borderRadius: 18,
+          maxWidth: "80%",
+          backgroundColor: "transparent",
+        },
+        bubbleUser: {
           borderWidth: 1,
           borderColor: theme.borderColor,
-          maxWidth: "80%",
-          backgroundColor: theme.assistantBg,
+          backgroundColor: theme.mode === "dark" ? "#2a2e38" : "#e8e9ef",
         },
-        bubbleUser: { backgroundColor: theme.userBg, borderColor: "#f0d8c6" },
-        bubbleSystem: { backgroundColor: "#fff4e4", borderStyle: "dashed" as const },
+        bubbleSystem: {},
         bubbleText: { fontSize: 15, lineHeight: 22, color: theme.textPrimary },
         bubbleTextSystem: { fontSize: 13, color: theme.textMuted },
         bubbleTextTerminated: { color: theme.textMuted, fontStyle: "italic" as const },
         bubbleTextPlaceholder: { color: theme.textMuted, fontStyle: "italic" as const },
+        fileActivityLine: { marginTop: 4, marginBottom: 4 },
+        fileActivityFileName: { color: theme.textPrimary, fontWeight: "600" as const },
         tailBoxScroll: { flexGrow: 0 },
         tailBoxContent: { paddingBottom: 12 },
         refPills: { flexDirection: "row" as const, flexWrap: "wrap" as const, gap: 8 },
@@ -119,16 +159,16 @@ export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailB
           paddingVertical: 6,
           paddingHorizontal: 10,
           borderRadius: 12,
-          backgroundColor: "#e8f0fe",
+          backgroundColor: theme.accentLight,
         },
-        refPillIcon: { fontSize: 12, color: "#4078F2" },
+        refPillIcon: { fontSize: 12, color: theme.accent },
         refPillText: { fontSize: 13, color: theme.textPrimary, fontWeight: "500" as const },
         bashCodeBlockWrapper: {
           alignSelf: "stretch",
           marginVertical: 4,
           borderRadius: 8,
           overflow: "hidden" as const,
-          backgroundColor: "#f0ebe4",
+          backgroundColor: codeBlockBg,
           borderWidth: 1,
           borderColor: theme.borderColor,
         },
@@ -140,15 +180,23 @@ export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailB
           paddingVertical: 6,
           borderBottomWidth: 1,
           borderBottomColor: theme.borderColor,
-          backgroundColor: "#e8e2da",
+          backgroundColor: bashHeaderBg,
         },
         bashCodeBlockHeaderSpacer: { flex: 1 },
-        bashRunButton: { paddingVertical: 4, paddingHorizontal: 12, borderRadius: 6, backgroundColor: theme.accent },
+        bashRunButton: {
+          flexDirection: "row" as const,
+          alignItems: "center",
+          gap: 4,
+          paddingVertical: 4,
+          paddingHorizontal: 12,
+          borderRadius: 6,
+          backgroundColor: theme.accent,
+        },
         bashRunButtonPressed: { opacity: 0.85 },
         bashRunButtonText: { fontSize: 13, fontWeight: "600" as const, color: "#fff" },
         bashCodeBlock: { paddingHorizontal: 12, paddingVertical: 10 },
       }),
-    [theme]
+    [theme, codeBlockBg, bashHeaderBg]
   );
 
   useEffect(() => {
@@ -157,6 +205,41 @@ export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailB
     }
   }, [showAsTailBox, message.content]);
 
+  const handleMarkdownLinkPress = useCallback(
+    (url: string): boolean => {
+      if (url.startsWith("file:")) {
+        const encodedPath = url.slice(5);
+        let path = encodedPath;
+        try {
+          path = decodeURIComponent(encodedPath);
+        } catch {
+          // Backward compatibility for older unencoded or malformed file: links.
+        }
+        onFileSelect?.(path);
+        return false;
+      }
+      if (onOpenUrl) {
+        onOpenUrl(url);
+        return false;
+      }
+      Linking.openURL(url);
+      return false;
+    },
+    [onFileSelect, onOpenUrl]
+  );
+
+  const sanitizedContent = useMemo(
+    () => stripTrailingIncompleteTag(message.content ?? ""),
+    [message.content]
+  );
+  const fileActivitySegments = useMemo(
+    () => parseFileActivitySegments(sanitizedContent),
+    [sanitizedContent]
+  );
+  const hasRawFileActivityLinks = useMemo(
+    () => fileActivitySegments.some((seg) => seg.kind === "file"),
+    [fileActivitySegments]
+  );
   const markdownRules = useMemo(() => {
     if (!onRunBashCommand) return undefined;
     return {
@@ -200,6 +283,7 @@ export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailB
                   style={({ pressed }) => [styles.bashRunButton, pressed && styles.bashRunButtonPressed]}
                   hitSlop={8}
                 >
+                  <PlayIcon size={11} color="#fff" />
                   <Text style={styles.bashRunButtonText}>Run</Text>
                 </Pressable>
               </View>
@@ -212,10 +296,52 @@ export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailB
         return codeBlock;
       },
     };
-  }, [onRunBashCommand]);
+  }, [onRunBashCommand, markdownStyles, styles]);
+
+  const renderFileActivityContent = useCallback(
+    () => (
+      <View>
+        {fileActivitySegments.map((seg, index) => {
+          if (seg.kind === "file") {
+            return (
+              <Text key={`file-activity-${index}`} style={[styles.bubbleText, styles.fileActivityLine]}>
+                {seg.prefix}{" "}
+                <Text style={styles.fileActivityFileName} onPress={() => onFileSelect?.(seg.path)}>
+                  {seg.fileName}
+                </Text>
+              </Text>
+            );
+          }
+          if (!seg.text.trim()) {
+            return <View key={`file-activity-space-${index}`} style={styles.fileActivityLine} />;
+          }
+          return (
+            <Markdown
+              key={`file-activity-text-${index}`}
+              style={markdownStyles}
+              mergeStyle
+              rules={markdownRules}
+              onLinkPress={handleMarkdownLinkPress}
+            >
+              {wrapBareUrlsInMarkdown(seg.text)}
+            </Markdown>
+          );
+        })}
+      </View>
+    ),
+    [fileActivitySegments, handleMarkdownLinkPress, markdownRules, markdownStyles, onFileSelect, styles]
+  );
+
+  const showProviderIcon = !isUser && !isSystem && provider;
+  const ProviderIcon = provider === "claude" ? ClaudeIcon : GeminiIcon;
 
   return (
     <View style={[styles.row, isUser && styles.rowUser]}>
+      {showProviderIcon && (
+        <View style={styles.providerIconWrap}>
+          <ProviderIcon size={24} />
+        </View>
+      )}
       <View style={[styles.bubble, isUser && styles.bubbleUser, isSystem && styles.bubbleSystem]}>
         {message.content && message.content.trim() !== "" ? (
           isTerminatedLabel ? (
@@ -244,38 +370,32 @@ export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailB
               showsHorizontalScrollIndicator={false}
               nestedScrollEnabled
             >
+              {hasRawFileActivityLinks ? (
+                renderFileActivityContent()
+              ) : (
+                <Markdown
+                  style={markdownStyles}
+                  mergeStyle
+                  rules={markdownRules}
+                  onLinkPress={handleMarkdownLinkPress}
+                >
+                  {wrapBareUrlsInMarkdown(sanitizedContent)}
+                </Markdown>
+              )}
+            </ScrollView>
+          ) : (
+            hasRawFileActivityLinks ? (
+              renderFileActivityContent()
+            ) : (
               <Markdown
                 style={markdownStyles}
                 mergeStyle
                 rules={markdownRules}
-                onLinkPress={(url) => {
-                  if (onOpenUrl) {
-                    onOpenUrl(url);
-                    return false;
-                  }
-                  Linking.openURL(url);
-                  return false;
-                }}
+                onLinkPress={handleMarkdownLinkPress}
               >
-                {wrapBareUrlsInMarkdown(message.content)}
+                {wrapBareUrlsInMarkdown(sanitizedContent)}
               </Markdown>
-            </ScrollView>
-          ) : (
-            <Markdown
-              style={markdownStyles}
-              mergeStyle
-              rules={markdownRules}
-              onLinkPress={(url) => {
-                if (onOpenUrl) {
-                  onOpenUrl(url);
-                  return false;
-                }
-                Linking.openURL(url);
-                return false;
-              }}
-            >
-              {wrapBareUrlsInMarkdown(message.content)}
-            </Markdown>
+            )
           )
         ) : !isUser && !isSystem ? (
           <Text style={[styles.bubbleText, styles.bubbleTextPlaceholder]} selectable={false}>

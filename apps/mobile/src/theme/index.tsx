@@ -28,10 +28,10 @@ export const claudeTheme = {
 } as const;
 
 export const geminiTheme = {
-  accent: "#7c3aed",
-  accentSoft: "#e6dbff",
-  accentMuted: "#ede9fe",
-  accentOnDark: "#c4b5fd",
+  accent: "#1a73e8",
+  accentSoft: "#e8f0fe",
+  accentMuted: "#d2e3fc",
+  accentOnDark: "#8ab4f8",
 } as const;
 
 export const themes = { claude: claudeTheme, gemini: geminiTheme } as const;
@@ -222,7 +222,7 @@ const motion = {
   },
 };
 
-function getNeutrals(mode: ColorMode) {
+function getNeutrals(mode: ColorMode, provider: Provider) {
   if (mode === "dark") {
     return {
       background: "#0d0f14",
@@ -241,7 +241,7 @@ function getNeutrals(mode: ColorMode) {
     };
   }
   return {
-    background: "#f8f7f5",
+    background: provider === "gemini" ? "#ffffff" : "#f8f7f5",
     surface: "#ffffff",
     surfaceAlt: "#f1f2f6",
     surfaceMuted: "#e7e9ef",
@@ -259,7 +259,7 @@ function getNeutrals(mode: ColorMode) {
 
 function buildTheme(provider: Provider, mode: ColorMode): DesignTheme {
   const brand: Brand = themes[provider];
-  const neutral = getNeutrals(mode);
+  const neutral = getNeutrals(mode, provider);
   const accent = mode === "dark" ? brand.accentOnDark : brand.accent;
   const accentSoft = mode === "dark" ? withAlpha(brand.accentOnDark, 0.18) : brand.accentSoft;
   const accentSubtle = withAlpha(accent, mode === "dark" ? 0.2 : 0.14);

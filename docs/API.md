@@ -141,7 +141,7 @@ socket.emit("submit-prompt", {
 socket.emit("submit-prompt", {
   prompt: "Refactor this file",
   provider: "claude",
-  permissionMode: "acceptPermissions",
+  permissionMode: "acceptEdits",
   allowedTools: ["Read", "Write"]
 });
 ```
@@ -175,7 +175,13 @@ Resize the PTY terminal.
 
 Kill the running Claude process.
 
-**Payload:** None
+**Payload (optional):**
+
+```typescript
+{
+  resetSession?: boolean; // true to force next submit to start fresh (no -c/--continue)
+}
+```
 
 #### `claude-debug`
 

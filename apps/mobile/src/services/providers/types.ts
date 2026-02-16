@@ -27,6 +27,8 @@ export interface EventContext {
   getAndClearToolUse?: (id: string) => ToolUseRecord | null;
   /** Add a single permission denial (merge with existing). Optional. */
   addPermissionDenial?: (denial: PermissionDenial) => void;
+  /** Set session ID from CLI stream (e.g. Claude "system", Gemini "init"). Optional. */
+  setSessionId?: (id: string | null) => void;
 }
 
 export type EventHandler = (data: Record<string, unknown>, ctx: EventContext) => void;
@@ -38,22 +40,39 @@ export function basename(filePath: string): string {
   return parts[parts.length - 1] ?? s;
 }
 
+/**
+ * Build a file: link for chat display. When tapped, opens the file in explorer.
+ * Returns markdown link syntax: [label](file:<encodedPath>)
+ */
+function fileActivityLink(label: string, filePath: string | null): string {
+  if (!filePath || typeof filePath !== "string") return label;
+  const path = String(filePath).trim();
+  if (!path) return label;
+  return `[${label}](file:${encodeURIComponent(path)})`;
+}
+
+/** Format one compact file activity line where only filename is clickable. */
+function fileActivityLine(prefix: string, file: string, filePath: string): string {
+  return `${prefix} ${fileActivityLink(file, filePath)}`;
+}
+
 /** Format one tool_use block as a short human-readable markdown line for the assistant bubble. */
 export function formatToolUseForDisplay(name: string, input: unknown): string {
   const obj = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
   const filePath = obj.file_path ?? obj.path;
-  const file = filePath != null ? basename(String(filePath)) : null;
+  const pathStr = filePath != null ? String(filePath).trim() : null;
+  const file = pathStr ? basename(pathStr) : null;
 
   // Normalize Gemini CLI tool names to display form
   const n = name === "ask_user" ? "AskUserQuestion" : name === "write_file" ? "Write" : name === "run_shell_command" ? "Bash" : name;
 
   switch (n) {
     case "Read":
-      return file ? `📖 Reading \`${file}\`` : "📖 Reading file";
+      return file && pathStr ? fileActivityLine("📖 Reading", file, pathStr) : "📖 Reading file";
     case "Edit":
-      return file ? `✏️ Editing \`${file}\`` : "✏️ Editing file";
+      return file && pathStr ? fileActivityLine("✏️ Editing", file, pathStr) : "✏️ Editing file";
     case "Write":
-      return file ? `📝 Writing \`${file}\`` : "📝 Writing file";
+      return file && pathStr ? fileActivityLine("📝 Writing", file, pathStr) : "📝 Writing file";
     case "Bash": {
       const cmd = obj.command != null ? String(obj.command).trim() : "";
       const displayCmd = cmd.length > 120 ? cmd.slice(0, 117) + "..." : cmd;

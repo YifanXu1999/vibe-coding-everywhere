@@ -87,16 +87,16 @@ const semanticColors = {
 export const brandColors = {
   gemini: {
     light: {
-      accent: "#7c3aed",
-      accentSoft: "#e6dbff",
-      accentMuted: "#ede9fe",
-      accentOnDark: "#c4b5fd",
+      accent: "#1a73e8",
+      accentSoft: "#e8f0fe",
+      accentMuted: "#d2e3fc",
+      accentOnDark: "#8ab4f8",
     },
     dark: {
-      accent: "#c4b5fd",
-      accentSoft: "rgba(196, 181, 253, 0.18)",
-      accentMuted: "rgba(196, 181, 253, 0.12)",
-      accentOnDark: "#c4b5fd",
+      accent: "#8ab4f8",
+      accentSoft: "rgba(138, 180, 248, 0.18)",
+      accentMuted: "rgba(138, 180, 248, 0.12)",
+      accentOnDark: "#8ab4f8",
     },
   },
   claude: {

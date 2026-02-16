@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import { AppButton, AppPressable, AppText } from "../../design-system";
 import { useTheme, type ColorModePreference } from "../../theme/index";
+import { GeminiIcon, ClaudeIcon } from "../icons/ProviderIcons";
 import type { Provider } from "../../theme/index";
 
 export type PermissionModeUI = "always_ask" | "ask_once_per_session" | "yolo";
@@ -23,6 +24,16 @@ const PERMISSION_OPTIONS: { value: PermissionModeUI; label: string }[] = [
 ];
 
 type WorkspaceChild = { name: string; path: string };
+
+/** Get relative path from root to fullPath. */
+function getRelativePath(fullPath: string, root: string): string {
+  const rootNorm = root.replace(/\/$/, "");
+  if (fullPath === rootNorm || fullPath === root) return "";
+  if (fullPath.startsWith(rootNorm + "/")) {
+    return fullPath.slice(rootNorm.length + 1);
+  }
+  return fullPath;
+}
 
 export interface SettingsModalProps {
   visible: boolean;
@@ -71,53 +82,69 @@ export function SettingsModal({
 
   const [showWorkspacePicker, setShowWorkspacePicker] = useState(false);
   const [allowedRoot, setAllowedRoot] = useState<string | null>(null);
-  const [browseParent, setBrowseParent] = useState<string>("");
-  const [pickerChildren, setPickerChildren] = useState<WorkspaceChild[]>([]);
-  const [pickerLoading, setPickerLoading] = useState(false);
   const [pickerError, setPickerError] = useState<string | null>(null);
+  const [treeCache, setTreeCache] = useState<Record<string, WorkspaceChild[]>>({});
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
+  const [loadingPaths, setLoadingPaths] = useState<Set<string>>(new Set());
+  const [selectingWorkspace, setSelectingWorkspace] = useState(false);
 
-  const fetchPickerChildren = useCallback(
-    (parent: string) => {
-      setPickerLoading(true);
-      setPickerError(null);
-      const q = parent ? `?parent=${encodeURIComponent(parent)}` : "";
-      fetch(`${serverBaseUrl}/api/workspace-allowed-children${q}`)
-        .then((res) => res.json())
-        .then((data) => setPickerChildren(data?.children ?? []))
-        .catch((e) => setPickerError(e?.message ?? "Failed to load"))
-        .finally(() => setPickerLoading(false));
-    },
-    [serverBaseUrl]
-  );
-
+  // Fetch workspace-path when Settings visible (for root + current path display)
   useEffect(() => {
-    if (showWorkspacePicker && visible) {
+    if (visible) {
       fetch(`${serverBaseUrl}/api/workspace-path`)
         .then((res) => res.json())
-        .then((data) => {
-          setAllowedRoot(data?.allowedRoot ?? null);
-          setBrowseParent("");
-          fetchPickerChildren("");
-        })
+        .then((data) => setAllowedRoot(data?.allowedRoot ?? null))
         .catch(() => setAllowedRoot(null));
     }
-  }, [showWorkspacePicker, visible, serverBaseUrl, fetchPickerChildren]);
+  }, [visible, serverBaseUrl]);
 
-  useEffect(() => {
-    if (showWorkspacePicker && allowedRoot != null) {
-      fetchPickerChildren(browseParent);
-    }
-  }, [showWorkspacePicker, allowedRoot, browseParent, fetchPickerChildren]);
+  const fetchPickerChildren = useCallback(
+    async (parentPath: string): Promise<WorkspaceChild[]> => {
+      const parentRel = allowedRoot && parentPath.startsWith(allowedRoot)
+        ? parentPath.slice(allowedRoot.length).replace(/^\//, "")
+        : parentPath;
+      const q = parentRel ? `?parent=${encodeURIComponent(parentRel)}` : "";
+      const res = await fetch(`${serverBaseUrl}/api/workspace-allowed-children${q}`);
+      const data = await res.json();
+      const children = data?.children ?? [];
+      return children;
+    },
+    [serverBaseUrl, allowedRoot]
+  );
 
-  const currentBrowseFullPath = allowedRoot
-    ? browseParent
-      ? `${allowedRoot}/${browseParent.replace(/^\//, "")}`
-      : allowedRoot
-    : "";
+  const handleToggleFolder = useCallback(
+    async (child: WorkspaceChild) => {
+      if (!allowedRoot) return;
+      const isExpanded = expandedPaths.has(child.path);
+      if (isExpanded) {
+        setExpandedPaths((prev) => {
+          const next = new Set(prev);
+          next.delete(child.path);
+          return next;
+        });
+        return;
+      }
+      setLoadingPaths((prev) => new Set(prev).add(child.path));
+      try {
+        const children = await fetchPickerChildren(child.path);
+        setTreeCache((prev) => ({ ...prev, [child.path]: children }));
+        setExpandedPaths((prev) => new Set(prev).add(child.path));
+      } catch (e) {
+        setPickerError(e?.message ?? "Failed to load");
+      } finally {
+        setLoadingPaths((prev) => {
+          const next = new Set(prev);
+          next.delete(child.path);
+          return next;
+        });
+      }
+    },
+    [allowedRoot, expandedPaths, fetchPickerChildren]
+  );
 
   const handleSelectWorkspace = useCallback(
     (path: string) => {
-      setPickerLoading(true);
+      setSelectingWorkspace(true);
       fetch(`${serverBaseUrl}/api/workspace-path`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -129,20 +156,70 @@ export function SettingsModal({
           onRefreshWorkspace?.();
         })
         .catch((e) => setPickerError(e?.message ?? "Failed to set workspace"))
-        .finally(() => setPickerLoading(false));
+        .finally(() => setSelectingWorkspace(false));
     },
     [serverBaseUrl, onRefreshWorkspace]
   );
 
-  const handleOpenFolder = useCallback(
-    (child: WorkspaceChild) => {
-      if (!allowedRoot) return;
-      const rel = child.path.startsWith(allowedRoot)
-        ? child.path.slice(allowedRoot.length).replace(/^\//, "")
-        : child.path;
-      setBrowseParent(rel);
+  const pickerLoading = loadingPaths.has("") || selectingWorkspace;
+  const currentRelativePath =
+    allowedRoot && workspacePath ? getRelativePath(workspacePath, allowedRoot) : "";
+
+  // Load root children when picker opens
+  const rootChildren = treeCache[""] ?? [];
+  useEffect(() => {
+    if (showWorkspacePicker && allowedRoot) {
+      setPickerError(null);
+      setLoadingPaths((prev) => new Set(prev).add(""));
+      fetchPickerChildren(allowedRoot)
+        .then((children) => setTreeCache((prev) => ({ ...prev, "": children })))
+        .catch((e) => setPickerError(e?.message ?? "Failed to load"))
+        .finally(() => setLoadingPaths((prev) => { const n = new Set(prev); n.delete(""); return n; }));
+    } else if (!showWorkspacePicker) {
+      setTreeCache({});
+      setExpandedPaths(new Set());
+      setLoadingPaths(new Set());
+    }
+  }, [showWorkspacePicker, allowedRoot, fetchPickerChildren]);
+
+  const renderTreeRow = useCallback(
+    (child: WorkspaceChild, depth: number) => {
+      const isExpanded = expandedPaths.has(child.path);
+      const children = treeCache[child.path];
+      const isLoading = loadingPaths.has(child.path);
+      return (
+        <View key={child.path}>
+          <View style={[styles.pickerRow, { paddingLeft: 12 + depth * 16 }]}>
+            <TouchableOpacity
+              style={styles.pickerRowExpand}
+              onPress={() => handleToggleFolder(child)}
+              disabled={isLoading}
+            >
+              <Text style={styles.pickerRowChevron}>{isExpanded ? "▼" : "▶"}</Text>
+              <Text style={styles.pickerRowName} numberOfLines={1}>
+                {child.name}
+              </Text>
+              {isLoading ? (
+                <ActivityIndicator size="small" color={theme.accent} style={styles.pickerRowLoader} />
+              ) : null}
+            </TouchableOpacity>
+            <AppButton
+              label="Select"
+              variant="primary"
+              size="sm"
+              onPress={() => handleSelectWorkspace(child.path)}
+              disabled={pickerLoading}
+            />
+          </View>
+          {isExpanded && children && children.length > 0 && (
+            <View style={styles.pickerTreeChildren}>
+              {children.map((c) => renderTreeRow(c, depth + 1))}
+            </View>
+          )}
+        </View>
+      );
     },
-    [allowedRoot]
+    [expandedPaths, treeCache, loadingPaths, handleToggleFolder, handleSelectWorkspace, pickerLoading, theme, styles]
   );
 
   if (!visible) return null;
@@ -176,6 +253,9 @@ export function SettingsModal({
                     onPress={() => setProviderAndModel("claude")}
                     activeOpacity={0.8}
                   >
+                    <View style={provider === "claude" ? undefined : styles.providerIconMuted}>
+                      <ClaudeIcon size={18} />
+                    </View>
                     <Text style={[styles.agentOptionText, provider === "claude" && styles.agentOptionTextActive]}>
                       Claude
                     </Text>
@@ -185,6 +265,9 @@ export function SettingsModal({
                     onPress={() => setProviderAndModel("gemini")}
                     activeOpacity={0.8}
                   >
+                    <View style={provider === "gemini" ? undefined : styles.providerIconMuted}>
+                      <GeminiIcon size={18} />
+                    </View>
                     <Text style={[styles.agentOptionText, provider === "gemini" && styles.agentOptionTextActive]}>
                       Gemini
                     </Text>
@@ -228,19 +311,30 @@ export function SettingsModal({
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>Workspace Selection</Text>
                 <View style={styles.workspaceBox}>
-                  <Text style={styles.workspacePath} numberOfLines={2}>
-                    {workspaceLoading ? "Loading…" : workspacePath ?? "—"}
-                  </Text>
+                  <View style={styles.workspaceRow}>
+                    <Text style={styles.workspaceLabel}>Root</Text>
+                    <Text style={styles.workspacePath} numberOfLines={1}>
+                      {allowedRoot ?? "—"}
+                    </Text>
+                  </View>
+                  <View style={styles.workspaceRow}>
+                    <Text style={styles.workspaceLabel}>Selected folder</Text>
+                    <Text style={styles.workspacePath} numberOfLines={2}>
+                      {workspaceLoading ? "Loading…" : allowedRoot ? (currentRelativePath || "(root)") : (workspacePath ?? "—")}
+                    </Text>
+                  </View>
                   <View style={styles.workspaceActions}>
                     <AppButton
-                      label="Change…"
-                      variant="ghost"
+                      label="Change workspace…"
+                      variant="secondary"
+                      size="sm"
                       onPress={() => setShowWorkspacePicker(true)}
                     />
                     {onRefreshWorkspace && (
                       <AppButton
                         label="Refresh"
-                        variant="ghost"
+                        variant="secondary"
+                        size="sm"
                         onPress={onRefreshWorkspace}
                       />
                     )}
@@ -248,76 +342,57 @@ export function SettingsModal({
                 </View>
               </View>
 
-              {showWorkspacePicker && (
-                <View style={styles.pickerOverlay}>
-                  <View style={styles.pickerCard}>
+              {/* Workspace folder selection: shown as a separate modal when "Change workspace" is tapped */}
+              <Modal
+                visible={showWorkspacePicker}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setShowWorkspacePicker(false)}
+              >
+                <View style={styles.pickerModalBackdrop}>
+                  <View style={styles.pickerModalContent}>
                     <View style={styles.pickerHeader}>
                       <Text style={styles.pickerTitle}>Select workspace</Text>
-                      <TouchableOpacity onPress={() => setShowWorkspacePicker(false)} style={styles.closeBtn}>
-                        <Text style={styles.closeBtnText}>✕</Text>
+                      <TouchableOpacity
+                        onPress={() => setShowWorkspacePicker(false)}
+                        style={styles.pickerCloseBtn}
+                        hitSlop={12}
+                        accessibilityLabel="Close"
+                      >
+                        <Text style={styles.pickerCloseBtnText}>✕</Text>
                       </TouchableOpacity>
                     </View>
                     {allowedRoot && (
                       <>
                         <View style={styles.breadcrumb}>
-                          {browseParent ? (
-                            <TouchableOpacity
-                              onPress={() => {
-                                const parts = browseParent.split("/").filter(Boolean);
-                                setBrowseParent(parts.slice(0, -1).join("/"));
-                              }}
-                              style={styles.breadcrumbItem}
-                            >
-                              <Text style={styles.breadcrumbText}>← Back</Text>
-                            </TouchableOpacity>
-                          ) : null}
                           <Text style={styles.breadcrumbPath} numberOfLines={1}>
-                            {allowedRoot}/{browseParent}
+                            Root → {currentRelativePath || "(root)"}
                           </Text>
                         </View>
-                        {browseParent ? (
+                        <View style={styles.pickerRootRow}>
+                          <Text style={styles.pickerRootLabel}>📁 (root)</Text>
                           <AppButton
-                            label="Use this folder"
+                            label="Select"
                             variant="primary"
-                            onPress={() => handleSelectWorkspace(currentBrowseFullPath)}
+                            size="sm"
+                            onPress={() => handleSelectWorkspace(allowedRoot)}
                             disabled={pickerLoading}
                           />
-                        ) : null}
+                        </View>
                         {pickerError ? (
                           <Text style={styles.pickerError}>{pickerError}</Text>
-                        ) : pickerLoading && pickerChildren.length === 0 ? (
+                        ) : pickerLoading && rootChildren.length === 0 ? (
                           <ActivityIndicator size="small" color={theme.accent} style={styles.pickerLoader} />
                         ) : (
                           <ScrollView style={styles.pickerList} nestedScrollEnabled>
-                            {pickerChildren.map((child) => (
-                              <View key={child.path} style={styles.pickerRow}>
-                                <Text style={styles.pickerRowName} numberOfLines={1}>
-                                  {child.name}
-                                </Text>
-                                <View style={styles.pickerRowActions}>
-                                  <AppButton
-                                    label="Open"
-                                    variant="secondary"
-                                    size="sm"
-                                    onPress={() => handleOpenFolder(child)}
-                                  />
-                                  <AppButton
-                                    label="Select"
-                                    variant="primary"
-                                    size="sm"
-                                    onPress={() => handleSelectWorkspace(child.path)}
-                                    disabled={pickerLoading}
-                                  />
-                                </View>
-                              </View>
-                            ))}
+                            {rootChildren.map((child) => renderTreeRow(child, 0))}
                           </ScrollView>
                         )}
                       </>
                     )}
                   </View>
                 </View>
-              )}
+              </Modal>
 
               {/* 4. Permission Mode Selection */}
               <View style={styles.section}>
@@ -421,12 +496,12 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
       marginBottom: 24,
     },
     sectionTitle: {
-      fontSize: 13,
-      fontWeight: "600",
-      color: theme.textMuted,
-      marginBottom: 10,
+      ...theme.typography.label,
+      fontSize: theme.typography.label.fontSize,
+      color: theme.colors.textSecondary,
+      marginBottom: theme.spacing.sm,
       textTransform: "uppercase",
-      letterSpacing: 0.5,
+      letterSpacing: 0.6,
     },
     row: {
       flexDirection: "row",
@@ -434,16 +509,16 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
       gap: 10,
     },
     agentOption: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
       paddingVertical: 10,
       paddingHorizontal: 16,
       borderRadius: 10,
       backgroundColor: theme.cardBg,
-      borderWidth: 1,
-      borderColor: theme.borderColor,
     },
     agentOptionActive: {
       backgroundColor: theme.accentLight,
-      borderColor: theme.accent,
     },
     agentOptionText: {
       fontSize: 15,
@@ -452,6 +527,9 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
     agentOptionTextActive: {
       color: theme.accent,
       fontWeight: "600",
+    },
+    providerIconMuted: {
+      opacity: 0.56,
     },
     modelRow: {
       flexDirection: "row",
@@ -496,73 +574,85 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
       color: theme.textPrimary,
     },
     workspaceBox: {
-      padding: 12,
-      borderRadius: 10,
+      padding: theme.spacing.sm,
+      borderRadius: theme.radii.md,
       backgroundColor: theme.cardBg,
       borderWidth: 1,
       borderColor: theme.borderColor,
     },
+    workspaceRow: {
+      marginBottom: theme.spacing.sm,
+    },
+    workspaceLabel: {
+      ...theme.typography.label,
+      color: theme.colors.textSecondary,
+      marginBottom: 4,
+      textTransform: "uppercase",
+    },
     workspacePath: {
-      fontSize: 13,
-      color: theme.textPrimary,
+      ...theme.typography.mono,
+      color: theme.colors.textPrimary,
       fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
     },
     workspaceActions: {
       flexDirection: "row",
-      gap: 12,
-      marginTop: 8,
+      flexWrap: "wrap",
+      gap: theme.spacing.xs,
+      marginTop: theme.spacing.xs,
+      paddingTop: theme.spacing.xs,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: theme.borderColor,
     },
-    changeWorkspaceBtn: {
-      alignSelf: "flex-start",
+    pickerModalBackdrop: {
+      flex: 1,
+      backgroundColor: theme.colors.overlay,
+      justifyContent: "center",
+      alignItems: "center",
+      padding: theme.spacing.sm,
     },
-    refreshWorkspaceBtn: {
-      alignSelf: "flex-start",
-    },
-    refreshWorkspaceText: {
-      fontSize: 13,
-      color: theme.accent,
-      fontWeight: "500",
-    },
-    pickerOverlay: {
-      marginTop: 8,
-      padding: 12,
+    pickerModalContent: {
+      width: "100%",
+      maxWidth: 400,
+      maxHeight: "80%",
       backgroundColor: theme.cardBg,
-      borderRadius: 12,
+      borderRadius: theme.radii.md,
       borderWidth: 1,
       borderColor: theme.borderColor,
-    },
-    pickerCard: {
-      maxHeight: 280,
+      padding: theme.spacing.sm,
     },
     pickerHeader: {
       flexDirection: "row",
       alignItems: "center",
       justifyContent: "space-between",
-      marginBottom: 8,
+      marginBottom: theme.spacing.sm,
+      paddingVertical: theme.spacing.xs,
     },
     pickerTitle: {
-      fontSize: 15,
+      ...theme.typography.callout,
       fontWeight: "600",
-      color: theme.textPrimary,
+      color: theme.colors.textPrimary,
+    },
+    pickerCloseBtn: {
+      padding: theme.spacing.xs,
+      minWidth: 44,
+      minHeight: 44,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    pickerCloseBtnText: {
+      ...theme.typography.body,
+      color: theme.colors.textSecondary,
     },
     breadcrumb: {
       flexDirection: "row",
       alignItems: "center",
-      marginBottom: 8,
-      gap: 6,
-    },
-    breadcrumbItem: {
+      marginBottom: theme.spacing.xs,
       paddingVertical: 4,
-      paddingHorizontal: 6,
-    },
-    breadcrumbText: {
-      fontSize: 13,
-      color: theme.accent,
     },
     breadcrumbPath: {
       flex: 1,
-      fontSize: 12,
-      color: theme.textMuted,
+      ...theme.typography.caption,
+      color: theme.colors.textSecondary,
       fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
     },
     useThisFolderBtn: {
@@ -581,29 +671,61 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
       fontWeight: "600",
     },
     pickerError: {
-      fontSize: 13,
+      ...theme.typography.callout,
       color: theme.danger,
-      marginBottom: 8,
+      marginBottom: theme.spacing.xs,
     },
     pickerLoader: {
-      marginVertical: 12,
+      marginVertical: theme.spacing.sm,
     },
     pickerList: {
       maxHeight: 180,
+    },
+    pickerRootRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      paddingVertical: theme.spacing.sm,
+      paddingHorizontal: theme.spacing.xs,
+      marginBottom: theme.spacing.xs,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: theme.borderColor,
+    },
+    pickerRootLabel: {
+      ...theme.typography.callout,
+      flex: 1,
+      color: theme.colors.textPrimary,
     },
     pickerRow: {
       flexDirection: "row",
       alignItems: "center",
       justifyContent: "space-between",
-      paddingVertical: 10,
-      paddingHorizontal: 8,
+      paddingVertical: theme.spacing.sm,
+      paddingHorizontal: theme.spacing.xs,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: theme.borderColor,
     },
-    pickerRowName: {
+    pickerRowExpand: {
       flex: 1,
-      fontSize: 14,
-      color: theme.textPrimary,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: theme.spacing.xs,
+    },
+    pickerRowChevron: {
+      ...theme.typography.caption,
+      color: theme.colors.textSecondary,
+      width: 16,
+    },
+    pickerRowName: {
+      ...theme.typography.callout,
+      flex: 1,
+      color: theme.colors.textPrimary,
+    },
+    pickerRowLoader: {
+      marginLeft: 4,
+    },
+    pickerTreeChildren: {
+      marginLeft: 0,
     },
     pickerRowActions: {
       flexDirection: "row",

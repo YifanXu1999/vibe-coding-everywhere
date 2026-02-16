@@ -309,11 +309,21 @@ function createRunRenderManager(socket) {
  */
 export function setupSocketHandlers(io) {
   io.on("connection", (socket) => {
-    // Track if Claude has completed at least one run (used for --continue flag)
+    // Track if first run has completed (used for --resume on Gemini / --resume <id> on Claude)
     const hasCompletedFirstRunRef = { value: false };
-    
+    // Session state: no session_id until first conversation is established; swap provider/model = new session
+    const session_management = {
+      session_id: null,
+      session_log_timestamp: null,
+      provider: null,
+      model: null,
+    };
+
     // Create managers for AI provider (Claude/Gemini) and terminal processes
-    const processManager = createProcessManager(socket, { hasCompletedFirstRunRef });
+    const processManager = createProcessManager(socket, {
+      hasCompletedFirstRunRef,
+      session_management,
+    });
     const runRenderManager = createRunRenderManager(socket);
 
     // AI PTY events (submit-prompt payload may include provider: "claude" | "gemini")

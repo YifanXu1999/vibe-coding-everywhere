@@ -1,6 +1,149 @@
 const ANSI_REGEX =
   /\x1B\[[0-9;?]*[ -/]*[@-~]|\x1B\][^\x07]*(?:\x07|\x1B\\)|\x1B[@-_]|\x1B.|[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
 
+// ---------------------------------------------------------------------------
+// Claude stream format (CLI JSON lines over PTY)
+// ---------------------------------------------------------------------------
+
+/** Claude session start (session_id, model, cwd). */
+export interface ClaudeSystemEvent {
+  type: "system";
+  session_id?: string;
+  model?: string;
+  cwd?: string;
+}
+
+/** Claude assistant content: message.content[] with text and/or tool_use. */
+export interface ClaudeAssistantContentBlock {
+  type: "text" | "tool_use";
+  text?: string;
+  name?: string;
+  input?: unknown;
+}
+
+export interface ClaudeAssistantEvent {
+  type: "assistant";
+  message?: { content?: ClaudeAssistantContentBlock[] };
+}
+
+/** Claude streaming delta (content_block_delta). */
+export interface ClaudeStreamEventPayload {
+  type: "stream_event";
+  event?: { type?: string; delta?: { text?: string } };
+}
+
+/** Claude tool input request (input / permission_request). */
+export interface ClaudeInputEvent {
+  type: "input" | "permission_request";
+  tool_name?: string;
+  tool?: string;
+  prompt?: string;
+  message?: string;
+  description?: string;
+}
+
+/** Claude user echo (no UI). */
+export interface ClaudeUserEvent {
+  type: "user";
+}
+
+/** Claude result summary at stream end. */
+export interface ClaudeResultEvent {
+  type: "result";
+  result?: string;
+}
+
+export type ClaudeStreamOutput =
+  | ClaudeSystemEvent
+  | ClaudeAssistantEvent
+  | ClaudeStreamEventPayload
+  | ClaudeInputEvent
+  | ClaudeUserEvent
+  | ClaudeResultEvent;
+
+/** Input sent to Claude CLI (e.g. user reply to tool request). */
+export interface ClaudeStreamInput {
+  message?: { content?: Array<{ type: string; content?: string }> };
+}
+
+const CLAUDE_STREAM_TYPES: readonly string[] = [
+  "system",
+  "assistant",
+  "stream_event",
+  "input",
+  "permission_request",
+  "user",
+  "result",
+];
+
+export function isClaudeStreamOutput(data: unknown): data is ClaudeStreamOutput {
+  if (typeof data !== "object" || data === null) return false;
+  const t = (data as Record<string, unknown>).type;
+  return typeof t === "string" && CLAUDE_STREAM_TYPES.includes(t);
+}
+
+// ---------------------------------------------------------------------------
+// Gemini stream format (CLI JSON lines over PTY)
+// ---------------------------------------------------------------------------
+
+/** Gemini session start (init). */
+export interface GeminiInitEvent {
+  type: "init";
+  session_id?: string;
+  model?: string;
+  cwd?: string;
+}
+
+/** Gemini message: string content (with optional delta) or message.content/parts. */
+export interface GeminiMessageEvent {
+  type: "message";
+  role?: "user" | "assistant" | "model";
+  /** When true, content is a delta chunk. */
+  delta?: boolean;
+  content?: string | Array<{ type?: string; text?: string; name?: string; input?: unknown }>;
+  message?: { content?: unknown[]; parts?: unknown[] };
+}
+
+/** Gemini standalone tool_use (tool_id, tool_name, parameters). */
+export interface GeminiToolUseEvent {
+  type: "tool_use";
+  tool_id?: string;
+  tool_name?: string;
+  tool?: string;
+  parameters?: Record<string, unknown>;
+  tool_input?: Record<string, unknown>;
+  input?: Record<string, unknown>;
+}
+
+/** Gemini tool_result (e.g. policy_violation for permission denial). */
+export interface GeminiToolResultEvent {
+  type: "tool_result";
+  tool_id?: string;
+  tool_name?: string;
+  status?: string;
+  error?: { type?: string; message?: string };
+}
+
+export type GeminiStreamOutput =
+  | GeminiInitEvent
+  | GeminiMessageEvent
+  | GeminiToolUseEvent
+  | GeminiToolResultEvent;
+
+/** Input sent to Gemini CLI (e.g. user reply / tool result). */
+export interface GeminiStreamInput {
+  message?: { content?: unknown[]; parts?: unknown[] };
+  content?: string;
+}
+
+const GEMINI_STREAM_TYPES: readonly string[] = ["init", "message", "tool_use", "tool_result"];
+
+export function isGeminiStreamOutput(data: unknown): data is GeminiStreamOutput {
+  if (typeof data !== "object" || data === null) return false;
+  const t = (data as Record<string, unknown>).type;
+  return typeof t === "string" && GEMINI_STREAM_TYPES.includes(t);
+}
+
 export const RENDER_CMD_REGEX = /Run the following command for render:\s*"([^"]+)"/i;
 export const RENDER_URL_REGEX = /URL for preview:\s*"([^"]+)"/i;
 /** Message is "not verified" (need permission) — do not show verified-style run bar. */
@@ -10,6 +153,19 @@ export function stripAnsi(value: string): string {
   if (!value) return "";
   return value.replace(ANSI_REGEX, "");
 }
+
+/** Regex for command-style opening tags: <u 'command' u> or <u'command'u> (spaces optional). */
+const COMMAND_OPEN_TAG_REGEX = /<u\s*'[^']*'\s*u>/gi;
+/** Closing tag for command span. */
+const COMMAND_CLOSE_TAG_REGEX = /<\/u>/gi;
+/** Leading fragment when stream chunk starts with tail of opening tag (e.g. "' u>", "' command' u>"). */
+const LEADING_OPEN_TAG_FRAGMENT_REGEX = /^\s*'[^']*'\s*u>\s*|^\s*'\s*u>\s*/i;
+/** Trailing incomplete opening tag at end: either no closing quote ("<u 'command") or no ">" ("<u 'command' u"). */
+const TRAILING_OPEN_TAG_FRAGMENT_REGEX = /<u\s*'[^']*'(?:\s*u?\s*)?$|<u\s*'[^']*$/i;
+/** Trailing incomplete closing tag (e.g. "</u" without ">"). */
+const TRAILING_CLOSE_TAG_FRAGMENT_REGEX = /<\/u\s*$/i;
+/** Leading bare "<u" not part of full command tag (PTY-injected before JSON line). Remove so we don't show "<u{...}". */
+const LEADING_BARE_U_REGEX = /^\s*<u(?!\s*'[^']*'\s*u>)/gm;
 
 /** Known bash/zsh system messages to hide from terminal output display. */
 const BASH_NOISE_PATTERNS = [
@@ -22,8 +178,28 @@ const BASH_NOISE_PATTERNS = [
 ];
 
 /**
+ * Strip command-style tags from text while preserving the content inside.
+ * Handles: <u 'command' u>content</u> → content
+ * Safe for streaming: strips leading/trailing incomplete tag fragments when the tag
+ * is split across chunks (e.g. chunk1: "<u 'command", chunk2: "' u>ls</u>").
+ */
+export function stripCommandStyleTags(value: string): string {
+  if (!value || typeof value !== "string") return value;
+  let out = value
+    .replace(COMMAND_OPEN_TAG_REGEX, "")
+    .replace(COMMAND_CLOSE_TAG_REGEX, "");
+  // Remove leading fragment (chunk started with tail of opening tag, e.g. "' u>ls")
+  out = out.replace(LEADING_OPEN_TAG_FRAGMENT_REGEX, "");
+  // Remove leading "<u" when not a full command tag (e.g. PTY-injected "<u" before JSON)
+  out = out.replace(LEADING_BARE_U_REGEX, "");
+  // Remove trailing incomplete fragments from chunked stream
+  out = out.replace(TRAILING_OPEN_TAG_FRAGMENT_REGEX, "").replace(TRAILING_CLOSE_TAG_FRAGMENT_REGEX, "");
+  return out;
+}
+
+/**
  * Filter out known bash shell system messages from terminal output.
- * Returns the filtered string, or empty string if the entire chunk should be hidden.
+ * Also strips command-style tags <u'...'u> while keeping inner content.
  */
 export function filterBashNoise(chunk: string): string {
   if (!chunk || typeof chunk !== "string") return "";
@@ -34,14 +210,15 @@ export function filterBashNoise(chunk: string): string {
     if (!trimmed) return true; // keep blank lines
     return !BASH_NOISE_PATTERNS.some((p) => p.test(trimmed));
   });
-  const result = kept.join("\n");
+  const result = kept
+    .map((line) => stripCommandStyleTags(line))
+    .join("\n");
   return result.trim() ? result : "";
 }
 
-/** Strip trailing incomplete XML/HTML tag (e.g. "<u" from truncated "<u>" or "<url...") that appears at end of chat. */
+/** Remove incomplete tag fragments and command-style tags from chat/terminal output. Preserves content inside tags. */
 export function stripTrailingIncompleteTag(value: string): string {
-  if (!value || typeof value !== "string") return value;
-  return value.replace(/\s*<\w*$/, "");
+  return stripCommandStyleTags(value ?? "");
 }
 
 export function extractRenderCommandAndUrl(text: string | null | undefined): { command: string; url: string } | null {
@@ -62,16 +239,16 @@ export function isAskUserQuestionPayload(data: unknown): boolean {
   return Array.isArray(input?.questions) && (input.questions as unknown[]).length > 0;
 }
 
+/** Union of all provider stream output types (for typing dispatcher input). */
+export type ProviderStreamOutput = ClaudeStreamOutput | GeminiStreamOutput;
+
 /** Check if data matches known AI stream event format (works for both Claude and Gemini). */
-export function isProviderStream(data: unknown): boolean {
+export function isProviderStream(data: unknown): data is ProviderStreamOutput | (Record<string, unknown> & { permission_denials: unknown[] }) {
   if (typeof data !== "object" || data === null) return false;
   const obj = data as Record<string, unknown>;
-  const types = [
-    "system", "assistant", "result", "user", "input", "permission_request", "stream_event",
-    "init", "message", "tool_use", "tool_result",
-  ];
   return (
-    types.includes(String(obj.type ?? "")) ||
+    isClaudeStreamOutput(obj) ||
+    isGeminiStreamOutput(obj) ||
     Array.isArray(obj.permission_denials) ||
     isAskUserQuestionPayload(obj)
   );

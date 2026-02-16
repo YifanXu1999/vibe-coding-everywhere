@@ -44,10 +44,13 @@
 - 客户端在 `submit-prompt` 的 payload 里可传 `permissionMode`。
 - 若未传或为空，使用服务端环境变量 `DEFAULT_PERMISSION_MODE`（默认 `bypassPermissions`）。
 
-**常见取值（以 Claude CLI 为准）：**
+**常见取值（以 Claude Code 文档为准）：**
 
+- `default`：每种工具首次使用时提示权限（“ask once per session”）
+- `acceptEdits`：自动接受编辑类权限（其他高风险操作仍可能要求确认）
+- `plan`：只做分析与计划，不执行变更
+- `dontAsk`：未显式允许的工具默认拒绝
 - `bypassPermissions`：自动通过权限
-- `acceptPermissions`：需要用户确认
 - 其他 CLI 支持的值按官方文档为准
 
 #### 3. 允许的工具（Allowed tools）
@@ -62,9 +65,9 @@
 
 | 条件 | 添加参数 | 说明 |
 |------|----------|------|
-| `opts.appendSystemPrompt` 非空 | `--append-system-prompt <text>` | 服务端将 `prompts/` 下各子目录拼成的系统提示（含访问限制、预览地址等）通过此参数传入。 |
+| `opts.systemPrompt` 非空 | `--system-prompt <text>` | 服务端将 `prompts/` 下各子目录拼成的系统提示（含访问限制、预览地址等）通过此参数传入。 |
 
-**来源：** 仅当 `provider === "claude"` 时，服务端调用 `getChatSystemPrompt()` 得到内容并赋给 `appendSystemPrompt`；Gemini 不使用此选项。
+**来源：** 仅当 `provider === "claude"` 时，服务端调用 `getChatSystemPrompt()` 得到内容并赋给 `systemPrompt`；Gemini 不使用此选项。
 
 ### Claude 命令示例
 
@@ -73,10 +76,10 @@
 claude --output-format stream-json --verbose --permission-mode bypassPermissions -p "Hello"
 
 # 续写 + 指定权限模式 + 允许 Read/Write
-claude --output-format stream-json --verbose -c --permission-mode acceptPermissions --allowedTools Read Write -p ""
+claude --output-format stream-json --verbose -c --permission-mode default --allowedTools Read Write -p ""
 
 # 带自定义系统提示
-claude --output-format stream-json --verbose --append-system-prompt "You are in workspace /path/to/project." -p "Refactor index.js"
+claude --output-format stream-json --verbose --system-prompt "You are in workspace /path/to/project." -p "Refactor index.js"
 ```
 
 ---
@@ -153,9 +156,9 @@ gemini --output-format stream-json --approval-mode auto_edit -p "Refactor this f
 ### 服务端 options 的构造（process/index.js）
 
 - **Claude：**  
-  `permissionMode`、`allowedTools`、`useContinue`、`appendSystemPrompt`（来自 `getChatSystemPrompt()`）。
+  `permissionMode`、`allowedTools`、`useContinue`、`systemPrompt`（来自 `getChatSystemPrompt()`）。
 - **Gemini：**  
-  `approvalMode`、`useContinue`（续写时加 `--resume`）；无 `permissionMode` / `allowedTools` / `appendSystemPrompt`。
+  `approvalMode`、`useContinue`（续写时加 `--resume`）；无 `permissionMode` / `allowedTools` / `systemPrompt`。
 
 ### 环境变量与默认值（server/config/index.js）
 
@@ -171,9 +174,9 @@ gemini --output-format stream-json --approval-mode auto_edit -p "Refactor this f
 
 | 场景 | Claude | Gemini |
 |------|--------|--------|
-| 首次发送一条 prompt | `-p "..."` + 可选 `--permission-mode`、`--allowedTools`、`--append-system-prompt` | `-p "..."` + 可选 `--approval-mode` |
+| 首次发送一条 prompt | `-p "..."` + 可选 `--permission-mode`、`--allowedTools`、`--system-prompt` | `-p "..."` + 可选 `--approval-mode` |
 | 同会话内再次发送（续写） | 加上 `-c`，其余同上 | 先结束当前进程，再以 `--resume` + `-p "..."` 启动新进程，可选 `--approval-mode` |
 | 权限被拒后重试 | 使用新的 `permissionMode` 和/或 `allowedTools` 再次 `submit-prompt`（可 `replaceRunning: true`） | 不涉及 permission/allowedTools |
-| 更换 workspace 或系统提示 | 仅 Claude：重启会话后 `getChatSystemPrompt()` 会重新读取 `prompts/`，从而更新 `--append-system-prompt` | 不涉及系统提示 |
+| 更换 workspace 或系统提示 | 仅 Claude：重启会话后 `getChatSystemPrompt()` 会重新读取 `prompts/`，从而更新 `--system-prompt` | 不涉及系统提示 |
 
 以上即本项目中 Claude 与 Gemini 命令的输入方式、flags/options 与不同场景的对应关系。

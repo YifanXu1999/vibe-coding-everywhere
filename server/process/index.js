@@ -1,6 +1,7 @@
 /**
  * Process management for AI provider PTY (Claude/Gemini) and run-render child processes.
  */
+import crypto from "crypto";
 import treeKill from "tree-kill";
 import pty from "node-pty";
 import fs from "fs";
@@ -8,6 +9,7 @@ import path from "path";
 import {
   getWorkspaceCwd,
   getProviderLogPath,
+  getLlmCliIoTurnPaths,
   DEFAULT_PERMISSION_MODE,
   DEFAULT_GEMINI_APPROVAL_MODE,
   DEFAULT_PROVIDER,
@@ -72,6 +74,33 @@ function emitError(socket, message) {
   socket.emit("output", `\r\n\x1b[31m[Error] ${message}\x1b[0m\r\n`);
 }
 
+/**
+ * Format command arguments as a single readable/copyable line.
+ * Multi-line values (e.g. system prompts) are escaped instead of breaking the command.
+ */
+function formatArgForLog(arg) {
+  const s = String(arg ?? "");
+  const escaped = s
+    .replace(/\\/g, "\\\\")
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\r")
+    .replace(/\t/g, "\\t")
+    .replace(/"/g, '\\"');
+  if (!s || /[\s"'`$\\]/.test(s)) return `"${escaped}"`;
+  return escaped;
+}
+
+function formatCommandForLog(binary, args) {
+  return [binary, ...args.map(formatArgForLog)].join(" ");
+}
+
+/** Format current time as yyyy-MM-dd_HH-mm-ss (24-hour) for log directory names. */
+function formatSessionLogTimestamp() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
+}
+
 export function spawnProvider(socket, provider, prompt, options) {
   const config = PROVIDER_CONFIG[provider];
   if (!config) {
@@ -79,7 +108,7 @@ export function spawnProvider(socket, provider, prompt, options) {
     return null;
   }
   const args = config.buildArgs(prompt, options);
-  const commandStr = [config.binary, ...args].join(" ");
+  const commandStr = formatCommandForLog(config.binary, args);
   console.log(`[${provider}] command:`, commandStr);
 
   try {
@@ -93,6 +122,8 @@ export function spawnProvider(socket, provider, prompt, options) {
     globalPtyProcesses.add(ptyProcess);
 
     let logStream = null;
+    let ioInputStream = null;
+    let ioOutputStream = null;
     try {
       const logPath = getProviderLogPath(provider);
       const logDir = path.dirname(logPath);
@@ -103,11 +134,19 @@ export function spawnProvider(socket, provider, prompt, options) {
       const header = `\n--- ${provider} session started ${new Date().toISOString()} ---\n`;
       logStream.write(header);
       logStream.write(`[command] ${commandStr}\n`);
-      if (options.appendSystemPrompt) {
+      if (options.systemPrompt) {
         logStream.write(
-          `[system-prompt] append (used):\n${options.appendSystemPrompt}\n--- end system prompt ---\n`
+          `[system-prompt] override (used):\n${options.systemPrompt}\n--- end system prompt ---\n`
         );
       }
+      // llm-cli-input-output: {timestamp}/{provider}-{sessionLogTimestamp}/{turnId}/input.log, output.log
+      const sessionId = options.sessionLogTimestamp ?? options.conversationSessionId ?? options.sessionId ?? "unknown";
+      const turnId = options.turnId ?? 1;
+      const { inputPath, outputPath } = getLlmCliIoTurnPaths(provider, sessionId, turnId);
+      ioInputStream = fs.createWriteStream(inputPath, { flags: "a" });
+      ioInputStream.write(`${commandStr}\n`);
+      ioInputStream.end();
+      ioOutputStream = fs.createWriteStream(outputPath, { flags: "a" });
     } catch (err) {
       console.warn("[ai-log] Failed to create log file:", err.message);
     }
@@ -117,10 +156,12 @@ export function spawnProvider(socket, provider, prompt, options) {
       const text = stripAnsi(data);
       if (text) process.stdout.write(text);
       if (logStream?.writable) logStream.write(data);
+      if (ioOutputStream?.writable) ioOutputStream.write(data);
     });
 
     socket.emit("claude-started", {
       provider,
+      session_id: options.sessionId ?? options.conversationSessionId ?? null,
       permissionMode: options.permissionMode || null,
       allowedTools: options.allowedTools || [],
       useContinue: !!options.useContinue,
@@ -135,7 +176,10 @@ export function spawnProvider(socket, provider, prompt, options) {
         );
         logStream.end();
       }
-      // Mark first run as completed so next submit-prompt uses --resume (Gemini) / -c (Claude)
+      if (ioOutputStream?.writable) {
+        ioOutputStream.end();
+      }
+      // Mark first run as completed so next submit-prompt uses --resume (Gemini) / --resume <sessionId> (Claude)
       if (exitCode === 0 && options.hasCompletedFirstRunRef) {
         options.hasCompletedFirstRunRef.value = true;
       }
@@ -154,8 +198,9 @@ export function spawnProvider(socket, provider, prompt, options) {
 /**
  * Creates an AI process manager for a socket connection (Claude or Gemini).
  */
-export function createProcessManager(socket, { hasCompletedFirstRunRef }) {
+export function createProcessManager(socket, { hasCompletedFirstRunRef, session_management }) {
   let ptyProcess = null;
+  let turnCounter = 0;
 
   function processRunning() {
     return ptyProcess !== null;
@@ -195,6 +240,11 @@ export function createProcessManager(socket, { hasCompletedFirstRunRef }) {
     const allowedTools = Array.isArray(payload?.allowedTools)
       ? payload.allowedTools.filter((t) => typeof t === "string" && t.trim()).map((t) => t.trim())
       : [];
+    const defaultModel = provider === "claude" ? "sonnet" : "gemini-2.5-flash";
+    const model =
+      typeof payload?.model === "string" && payload.model.trim()
+        ? payload.model.trim()
+        : defaultModel;
     // When user sends a new message while previous session is still running, kill it so we can spawn with --resume and the new prompt
     if (ptyProcess && !replaceRunning && prompt) {
       globalPtyProcesses.delete(ptyProcess);
@@ -203,38 +253,65 @@ export function createProcessManager(socket, { hasCompletedFirstRunRef }) {
       hasCompletedFirstRunRef.value = true;
       socket.emit("exit", { exitCode: 0 });
     }
+    // Swapping provider or model starts a new session (clear session_id, next run is "first")
+    if (
+      session_management &&
+      (session_management.provider !== provider || session_management.model !== model)
+    ) {
+      session_management.session_id = null;
+      session_management.session_log_timestamp = null;
+      session_management.provider = provider;
+      session_management.model = model;
+      hasCompletedFirstRunRef.value = false;
+    }
+
     const useContinue = hasCompletedFirstRunRef.value;
+    // Claude: no session_id before first conversation; assign when establishing first run, then use --resume
+    let sessionId = undefined;
+    if (provider === "claude" && session_management) {
+      if (session_management.session_id) {
+        sessionId = session_management.session_id;
+      } else {
+        session_management.session_id = crypto.randomUUID();
+        sessionId = session_management.session_id;
+      }
+    }
+
     const approvalMode =
       typeof payload?.approvalMode === "string" && payload.approvalMode.trim()
         ? payload.approvalMode.trim()
         : DEFAULT_GEMINI_APPROVAL_MODE;
 
-    const defaultModel = provider === "claude" ? "sonnet" : "gemini-2.5-flash";
-    const model =
-      typeof payload?.model === "string" && payload.model.trim()
-        ? payload.model.trim()
-        : defaultModel;
-
-    let appendSystemPrompt = null;
+    let systemPrompt = null;
     if (provider === "claude") {
-      appendSystemPrompt = getChatSystemPrompt();
+      systemPrompt = getChatSystemPrompt();
       console.log(
-        "[system-prompt] used (append):",
-        appendSystemPrompt ? `${appendSystemPrompt.slice(0, 80)}...` : "(none)"
+        "[system-prompt] used (override):",
+        systemPrompt ? `${systemPrompt.slice(0, 80)}...` : "(none)"
       );
-      if (appendSystemPrompt) {
-        console.log("[system-prompt] full content:\n", appendSystemPrompt);
+      if (systemPrompt) {
+        console.log("[system-prompt] full content:\n", systemPrompt);
       }
     }
+
+    turnCounter += 1;
+    if (session_management && !session_management.session_log_timestamp) {
+      session_management.session_log_timestamp = formatSessionLogTimestamp();
+    }
+    const conversationSessionId = socket.id ?? "unknown";
 
     const options = {
       model,
       permissionMode: permissionMode || null,
       allowedTools,
       useContinue,
-      appendSystemPrompt: appendSystemPrompt || undefined,
+      sessionId,
+      systemPrompt: systemPrompt || undefined,
       approvalMode: provider === "gemini" ? approvalMode : undefined,
       hasCompletedFirstRunRef,
+      sessionLogTimestamp: session_management?.session_log_timestamp ?? undefined,
+      conversationSessionId,
+      turnId: turnCounter,
     };
 
     // When continuing (second+ message), kill existing PTY so Gemini can persist session as "latest" before we spawn with --resume
@@ -263,7 +340,13 @@ export function createProcessManager(socket, { hasCompletedFirstRunRef }) {
     }
   }
 
-  function handleTerminate() {
+  function handleTerminate(payload) {
+    const resetSession = !!payload?.resetSession;
+    if (resetSession && session_management) {
+      hasCompletedFirstRunRef.value = false;
+      session_management.session_id = null;
+      session_management.session_log_timestamp = null;
+    }
     if (ptyProcess) {
       globalPtyProcesses.delete(ptyProcess);
       killPtyProcess(ptyProcess);

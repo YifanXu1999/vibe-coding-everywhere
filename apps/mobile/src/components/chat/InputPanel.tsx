@@ -7,23 +7,19 @@ import {
   Text,
   KeyboardAvoidingView,
   Platform,
-  Image,
   Modal,
   ScrollView,
 } from "react-native";
-import Svg, { Path } from "react-native-svg";
+import { GeminiIcon, ClaudeIcon, GeminiSendIcon, ClaudeSendIcon } from "../icons/ProviderIcons";
+import {
+  AttachPlusIcon,
+  ChevronDownIcon,
+  CloseIcon,
+  GlobeIcon,
+  StopCircleIcon,
+  TerminalIcon,
+} from "../icons/ChatActionIcons";
 import { useTheme } from "../../theme/index";
-
-function GlobeIcon({ size = 20, color = "#333" }: { size?: number; color?: string }) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 256 256" fill="none">
-      <Path
-        fill={color}
-        d="M222.35693,161.11682a99.99106,99.99106,0,0,0-.02246-66.2959,3.99577,3.99577,0,0,0-.16308-.46191A100.00019,100.00019,0,0,0,33.83105,94.3512a4.01515,4.01515,0,0,0-.17773.50415,99.99136,99.99136,0,0,0,.03125,66.37927,4.14511,4.14511,0,0,0,.13965.3949,100,100,0,0,0,188.34228.02624A3.96321,3.96321,0,0,0,222.35693,161.11682ZM128,216.03064c-14.43311-13.53882-25.105-31.73706-30.93994-52.03027h61.87988C153.105,184.29358,142.43311,202.49182,128,216.03064ZM95.02979,156.00037a130.90714,130.90714,0,0,1-.00049-56h65.9414a130.90714,130.90714,0,0,1-.00049,56ZM36,128.00037a91.65778,91.65778,0,0,1,4.36182-28H86.76123a143.33386,143.33386,0,0,0,.00049,56H40.36182A91.65787,91.65787,0,0,1,36,128.00037Zm92-88.03028c14.43506,13.53858,25.10693,31.73633,30.94092,52.03028H97.05908C102.89307,71.70642,113.56494,53.50867,128,39.97009Zm41.23877,60.03028h46.39941a92.05165,92.05165,0,0,1,0,56h-46.3999a143.33386,143.33386,0,0,0,.00049-56Zm43.42187-8H167.36426c-5.70655-21.50928-16.53174-40.7439-31.61377-55.67041A92.20548,92.20548,0,0,1,212.66064,92.00037ZM120.24951,36.33c-15.082,14.92651-25.90722,34.16113-31.61377,55.67041H43.33936A92.20548,92.20548,0,0,1,120.24951,36.33ZM43.33936,164.00037H88.63574c5.707,21.50879,16.53174,40.74353,31.61377,55.67041A92.20529,92.20529,0,0,1,43.33936,164.00037Zm92.41113,55.67041c15.082-14.92688,25.90674-34.16162,31.61377-55.67041h45.29638A92.20529,92.20529,0,0,1,135.75049,219.67078Z"
-      />
-    </Svg>
-  );
-}
 
 const DEFAULT_PLACEHOLDER = "How can I help you today?";
 const INPUT_PLACEHOLDER = "Type response for Claude…";
@@ -136,7 +132,7 @@ export function InputPanel({
                     onPress={() => onRemoveCodeRef(index)}
                     style={styles.refPillRemove}
                   >
-                    <Text style={styles.refPillRemoveText}>×</Text>
+                    <CloseIcon size={12} color={theme.textMuted} />
                   </TouchableOpacity>
                 )}
               </View>
@@ -158,17 +154,22 @@ export function InputPanel({
           <View style={[styles.statusDot, connected && styles.statusDotConnected]} />
         </View>
         <View style={styles.bottomRow}>
-          <TouchableOpacity style={styles.btnAttach} activeOpacity={0.8}>
-            <Text style={styles.btnAttachText}>+</Text>
+          <TouchableOpacity
+            style={[styles.btnAttach, provider === "gemini" && styles.btnAttachLight]}
+            activeOpacity={0.8}
+            accessibilityLabel="Attach file"
+          >
+            <AttachPlusIcon size={18} color={provider === "gemini" ? theme.accent : "#ffffff"} strokeWidth={2.1} />
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.modelSelector}
             onPress={() => (onProviderChange || onModelChange ? setModelPickerVisible(true) : null)}
             activeOpacity={0.8}
             disabled={!onProviderChange && !onModelChange}
+            accessibilityLabel="Select model"
           >
             <Text style={styles.modelName}>{currentModelLabel}</Text>
-            <Text style={styles.chevron}>▼</Text>
+            <ChevronDownIcon size={14} color={theme.textMuted} />
           </TouchableOpacity>
           {onOpenWebPreview && (
             <TouchableOpacity
@@ -177,7 +178,7 @@ export function InputPanel({
               activeOpacity={0.8}
               accessibilityLabel="Open web preview"
             >
-              <GlobeIcon size={20} color={theme.textPrimary} />
+              <GlobeIcon size={18} color={theme.textPrimary} />
             </TouchableOpacity>
           )}
           {onOpenTerminal && (
@@ -187,7 +188,7 @@ export function InputPanel({
               activeOpacity={0.8}
               accessibilityLabel="Open terminal"
             >
-              <Text style={styles.btnTerminalText}>⌘</Text>
+              <TerminalIcon size={18} color={theme.textPrimary} />
               {runProcessActive && <View style={styles.terminalRunningDot} />}
             </TouchableOpacity>
           )}
@@ -198,20 +199,25 @@ export function InputPanel({
               activeOpacity={0.8}
               accessibilityLabel="Terminate agent response"
             >
+              <StopCircleIcon size={14} color={theme.mode === "dark" ? "#f87171" : "#c0392b"} />
               <Text style={styles.btnTerminateAgentText}>Stop</Text>
             </TouchableOpacity>
           )}
           <TouchableOpacity
-            style={[styles.btnSend, disabled && styles.btnSendDisabled]}
+            style={[
+              styles.btnSend,
+              provider === "gemini" ? styles.btnSendLight : styles.btnSendDark,
+              disabled && styles.btnSendDisabled,
+            ]}
             onPress={handleSubmit}
             disabled={disabled}
             activeOpacity={0.8}
           >
-            <Image
-              source={require("../../../assets/send-button.png")}
-              style={styles.sendButtonIcon}
-              resizeMode="contain"
-            />
+            {provider === "gemini" ? (
+              <GeminiSendIcon size={20} color={theme.accent} />
+            ) : (
+              <ClaudeSendIcon size={20} color={theme.accent} />
+            )}
           </TouchableOpacity>
         </View>
       </View>
@@ -235,6 +241,9 @@ export function InputPanel({
                 onPress={() => onProviderChange?.("claude")}
                 activeOpacity={0.8}
               >
+                <View style={provider === "claude" ? undefined : styles.providerIconMuted}>
+                  <ClaudeIcon size={18} />
+                </View>
                 <Text style={[styles.modelPickerProviderText, provider === "claude" && styles.modelPickerProviderTextActive]}>Claude</Text>
               </TouchableOpacity>
               <TouchableOpacity
@@ -242,6 +251,9 @@ export function InputPanel({
                 onPress={() => onProviderChange?.("gemini")}
                 activeOpacity={0.8}
               >
+                <View style={provider === "gemini" ? undefined : styles.providerIconMuted}>
+                  <GeminiIcon size={18} />
+                </View>
                 <Text style={[styles.modelPickerProviderText, provider === "gemini" && styles.modelPickerProviderTextActive]}>Gemini</Text>
               </TouchableOpacity>
             </View>
@@ -269,6 +281,8 @@ export function InputPanel({
 }
 
 function createInputPanelStyles(theme: ReturnType<typeof useTheme>) {
+  const utilityButtonBg = theme.mode === "dark" ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)";
+  const terminateTextColor = theme.mode === "dark" ? "#f87171" : "#c0392b";
   return StyleSheet.create({
   container: {
     flexDirection: "column",
@@ -294,7 +308,7 @@ function createInputPanelStyles(theme: ReturnType<typeof useTheme>) {
     paddingLeft: 10,
     paddingRight: 4,
     borderRadius: 12,
-    backgroundColor: "#e8f0fe",
+    backgroundColor: theme.accentLight ?? "#e8f0fe",
     maxWidth: "100%",
   },
   refPillText: {
@@ -303,12 +317,11 @@ function createInputPanelStyles(theme: ReturnType<typeof useTheme>) {
     fontWeight: "500",
   },
   refPillRemove: {
-    padding: 2,
-  },
-  refPillRemoveText: {
-    fontSize: 18,
-    color: theme.textMuted,
-    lineHeight: 20,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
   },
   topRow: {
     flexDirection: "row",
@@ -344,26 +357,21 @@ function createInputPanelStyles(theme: ReturnType<typeof useTheme>) {
     alignItems: "center",
     justifyContent: "center",
   },
-  btnAttachText: {
-    fontSize: 20,
-    color: "#fff",
-    fontWeight: "300",
-    lineHeight: 22,
+  btnAttachLight: {
+    backgroundColor: theme.accentLight ?? "#e8f0fe",
+    borderWidth: 1,
+    borderColor: theme.borderColor,
   },
   modelSelector: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
+    gap: 6,
     marginRight: "auto",
   },
   modelName: {
     fontSize: 14,
     color: theme.textMuted,
     fontWeight: "500",
-  },
-  chevron: {
-    fontSize: 10,
-    color: theme.textMuted,
   },
   modelPickerBackdrop: {
     flex: 1,
@@ -394,16 +402,16 @@ function createInputPanelStyles(theme: ReturnType<typeof useTheme>) {
     marginBottom: 16,
   },
   modelPickerProviderBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
     paddingVertical: 10,
     paddingHorizontal: 16,
     borderRadius: 10,
     backgroundColor: theme.cardBg,
-    borderWidth: 1,
-    borderColor: theme.borderColor,
   },
   modelPickerProviderBtnActive: {
     backgroundColor: theme.accentLight ?? "#e8f0fe",
-    borderColor: theme.accent ?? "#1a73e8",
   },
   modelPickerProviderText: {
     fontSize: 15,
@@ -412,6 +420,9 @@ function createInputPanelStyles(theme: ReturnType<typeof useTheme>) {
   modelPickerProviderTextActive: {
     color: theme.accent ?? "#1a73e8",
     fontWeight: "600",
+  },
+  providerIconMuted: {
+    opacity: 0.56,
   },
   modelPickerList: {
     maxHeight: 220,
@@ -441,7 +452,7 @@ function createInputPanelStyles(theme: ReturnType<typeof useTheme>) {
     width: 36,
     height: 36,
     borderRadius: 10,
-    backgroundColor: "rgba(0,0,0,0.06)",
+    backgroundColor: utilityButtonBg,
     borderWidth: 1,
     borderColor: theme.borderColor,
     alignItems: "center",
@@ -451,7 +462,7 @@ function createInputPanelStyles(theme: ReturnType<typeof useTheme>) {
     width: 36,
     height: 36,
     borderRadius: 10,
-    backgroundColor: "rgba(0,0,0,0.06)",
+    backgroundColor: utilityButtonBg,
     borderWidth: 1,
     borderColor: theme.borderColor,
     alignItems: "center",
@@ -475,18 +486,20 @@ function createInputPanelStyles(theme: ReturnType<typeof useTheme>) {
     backgroundColor: theme.success,
   },
   btnTerminateAgent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
     paddingHorizontal: 12,
     height: 36,
     borderRadius: 10,
-    backgroundColor: "rgba(200, 60, 60, 0.15)",
+    backgroundColor: theme.mode === "dark" ? "rgba(248,113,113,0.14)" : "rgba(220,38,38,0.12)",
     borderWidth: 1,
-    borderColor: "rgba(200, 60, 60, 0.4)",
-    alignItems: "center",
+    borderColor: theme.mode === "dark" ? "rgba(248,113,113,0.45)" : "rgba(192,57,43,0.4)",
     justifyContent: "center",
   },
   btnTerminateAgentText: {
     fontSize: 14,
-    color: "#c0392b",
+    color: terminateTextColor,
     fontWeight: "600",
   },
   btnSend: {
@@ -495,6 +508,14 @@ function createInputPanelStyles(theme: ReturnType<typeof useTheme>) {
     borderRadius: 18,
     alignItems: "center",
     justifyContent: "center",
+  },
+  btnSendLight: {
+    backgroundColor: theme.accentLight ?? "#e8f0fe",
+    borderWidth: 1,
+    borderColor: theme.borderColor,
+  },
+  btnSendDark: {
+    backgroundColor: theme.mode === "dark" ? "#171c24" : "#12131a",
   },
   btnSendDisabled: {
     opacity: 0.4,

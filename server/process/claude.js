@@ -11,8 +11,12 @@ export const claudeConfig = {
     "stream-json",
     "--verbose",
     ...(opts.model ? ["--model", opts.model] : []),
-    ...(opts.appendSystemPrompt ? ["--append-system-prompt", opts.appendSystemPrompt] : []),
-    ...(opts.useContinue ? ["-c"] : []),
+    ...(opts.systemPrompt ? ["--system-prompt", opts.systemPrompt] : []),
+    ...(opts.sessionId
+      ? opts.useContinue
+        ? ["--resume", opts.sessionId]
+        : ["--session-id", opts.sessionId]
+      : []),
     ...(opts.permissionMode ? ["--permission-mode", opts.permissionMode] : []),
     ...(Array.isArray(opts.allowedTools) && opts.allowedTools.length > 0
       ? ["--allowedTools", ...opts.allowedTools]
