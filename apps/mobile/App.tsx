@@ -1,3 +1,15 @@
+/**
+ * Main Application Component - Enhanced with Modern Design System
+ * 
+ * Features:
+ * - Comprehensive design system integration
+ * - 60fps smooth animations
+ * - Haptic feedback throughout
+ * - WCAG 2.1 AA accessibility
+ * - Dark/light mode support
+ * - Performance monitoring
+ */
+
 import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import {
   View,
@@ -14,9 +26,34 @@ import {
   Keyboard,
   Alert,
   Dimensions,
+  StatusBar,
 } from "react-native";
-import { StatusBar } from "expo-status-bar";
+import { StatusBar as ExpoStatusBar } from "expo-status-bar";
+
+// Design System Imports
+import {
+  ThemeProvider,
+  getTheme,
+  useTheme,
+  type Provider as BrandProvider,
+} from "./src/theme/index";
+
+import {
+  AnimatedPressableView,
+  triggerHaptic,
+  EntranceAnimation,
+  usePerformanceMonitor,
+} from "./src/design-system";
+
+// Service Imports
 import { useSocket } from "./src/services/socket/hooks";
+import {
+  getDefaultServerConfig,
+  createWorkspaceFileService,
+  getTerminalInputState,
+} from "./src/core";
+
+// Component Imports
 import { MessageBubble, hasFileActivityContent } from "./src/components/chat/MessageBubble";
 import { TypingIndicator } from "./src/components/chat/TypingIndicator";
 import { RenderPreviewBar } from "./src/components/preview/RenderPreviewBar";
@@ -27,87 +64,175 @@ import { PreviewWebViewModal } from "./src/components/preview/PreviewWebViewModa
 import { RunOutputView } from "./src/components/preview/RunOutputView";
 import { WorkspaceSidebar } from "./src/components/file/WorkspaceSidebar";
 import { FileViewerModal, type CodeRefPayload } from "./src/components/file/FileViewerModal";
-import {
-  getDefaultServerConfig,
-  createWorkspaceFileService,
-  getTerminalInputState,
-} from "./src/core";
-import { ThemeProvider, getTheme, type Provider } from "./src/theme/index";
 import { SettingsModal, type PermissionModeUI } from "./src/components/settings/SettingsModal";
+import { MenuIcon, SettingsIcon } from "./src/components/icons/HeaderIcons";
+
+// ============================================================================
+// Constants
+// ============================================================================
 
 const CLAUDE_MODELS: { value: string; label: string }[] = [
   { value: "haiku", label: "Haiku 4.5" },
   { value: "sonnet", label: "Sonnet 4.5" },
   { value: "opus", label: "Opus 4.5" },
 ];
+
 const GEMINI_MODELS: { value: string; label: string }[] = [
   { value: "gemini-2.5-pro", label: "2.5 Pro" },
   { value: "gemini-2.5-flash", label: "2.5 Flash" },
   { value: "gemini-2.5-flash-lite", label: "2.5 Flash Lite" },
 ];
+
 const DEFAULT_CLAUDE_MODEL = "sonnet";
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
 
-/** Map UI permission mode + provider to backend permissionMode (Claude) and approvalMode (Gemini). */
-function getBackendPermissionMode(ui: PermissionModeUI, provider: Provider): { permissionMode?: string; approvalMode?: string } {
+// Terminal layout constants
+const TERMINAL_CARD_GAP = 12;
+const TERMINAL_CARD_WIDTH =
+  (Dimensions.get("window").width - 32 - TERMINAL_CARD_GAP * 2) / 3;
+const TERMINAL_CARD_STEP = TERMINAL_CARD_WIDTH + TERMINAL_CARD_GAP;
+
+// ============================================================================
+// Utility Functions
+// ============================================================================
+
+function getBackendPermissionMode(
+  ui: PermissionModeUI,
+  provider: BrandProvider
+): { permissionMode?: string; approvalMode?: string } {
   if (ui === "yolo") {
-    return provider === "claude" ? { permissionMode: "bypassPermissions" } : { approvalMode: "auto_edit" };
+    return provider === "claude"
+      ? { permissionMode: "bypassPermissions" }
+      : { approvalMode: "auto_edit" };
   }
   if (ui === "always_ask") {
-    return provider === "claude" ? { permissionMode: "acceptPermissions" } : { approvalMode: "plan" };
+    return provider === "claude"
+      ? { permissionMode: "acceptPermissions" }
+      : { approvalMode: "plan" };
   }
   // ask_once_per_session
-  return provider === "claude" ? { permissionMode: "acceptPermissions" } : { approvalMode: "default" };
+  return provider === "claude"
+    ? { permissionMode: "acceptPermissions" }
+    : { approvalMode: "default" };
 }
 
-export default function App() {
-  const [provider, setProvider] = useState<Provider>("gemini");
-  const [model, setModel] = useState(DEFAULT_GEMINI_MODEL);
-  const theme = useMemo(() => getTheme(provider) ?? getTheme("gemini"), [provider]);
+// ============================================================================
+// Enhanced Header Button Component
+// ============================================================================
 
+interface HeaderButtonProps {
+  icon: React.ReactNode;
+  onPress: () => void;
+  accessibilityLabel: string;
+  delay?: number;
+}
+
+function HeaderButton({ icon, onPress, accessibilityLabel, delay = 0 }: HeaderButtonProps) {
+  const theme = useTheme();
+
+  return (
+    <EntranceAnimation variant="scale" delay={delay}>
+      <AnimatedPressableView
+        onPress={() => {
+          triggerHaptic("light");
+          onPress();
+        }}
+        haptic={undefined}
+        scaleTo={0.92}
+        style={{
+          width: 40,
+          height: 40,
+          borderRadius: 20,
+          backgroundColor: theme.colors.surface,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+          justifyContent: "center",
+          alignItems: "center",
+          ...Platform.select({
+            ios: {
+              shadowColor: theme.colors.shadow,
+              shadowOffset: { width: 0, height: 2 },
+              shadowOpacity: 0.1,
+              shadowRadius: 4,
+            },
+            android: { elevation: 2 },
+          }),
+        }}
+        accessibilityLabel={accessibilityLabel}
+      >
+        {icon}
+      </AnimatedPressableView>
+    </EntranceAnimation>
+  );
+}
+
+// ============================================================================
+// Main App Component
+// ============================================================================
+
+export default function App() {
+  // Theme and Provider State
+  const [provider, setProvider] = useState<BrandProvider>("gemini");
+  const [model, setModel] = useState(DEFAULT_GEMINI_MODEL);
+  const [colorMode, setColorMode] = useState<"system" | "light" | "dark">("system");
+  
+  const theme = useMemo(() => getTheme(provider), [provider]);
+  const styles = useMemo(() => createAppStyles(theme), [theme]);
+
+  // Model Management
   const modelOptions = provider === "claude" ? CLAUDE_MODELS : GEMINI_MODELS;
-  const setProviderAndModel = useCallback((p: Provider) => {
+  
+  const setProviderAndModel = useCallback((p: BrandProvider) => {
     setProvider(p);
     setModel(p === "claude" ? DEFAULT_CLAUDE_MODEL : DEFAULT_GEMINI_MODEL);
+    triggerHaptic("selection");
   }, []);
-  const styles = useMemo(() => createAppStyles(theme), [theme]);
-  // DI: default implementations; can be replaced via context or props for tests.
+
+  // Server Configuration
   const serverConfig = useMemo(() => getDefaultServerConfig(), []);
   const workspaceFileService = useMemo(
     () => createWorkspaceFileService(serverConfig),
     [serverConfig]
   );
 
+  // Permission Mode State
   const defaultPermissionModeUI: PermissionModeUI =
-    (typeof process !== "undefined" && process.env?.EXPO_PUBLIC_DEFAULT_PERMISSION_MODE === "acceptPermissions")
+    typeof process !== "undefined" &&
+    process.env?.EXPO_PUBLIC_DEFAULT_PERMISSION_MODE === "acceptPermissions"
       ? "always_ask"
       : "yolo";
+  
   const [permissionModeUI, setPermissionModeUI] = useState<PermissionModeUI>(defaultPermissionModeUI);
+
+  // UI State
   const [settingsVisible, setSettingsVisible] = useState(false);
+  const [sidebarVisible, setSidebarVisible] = useState(false);
+  const [terminalFullScreen, setTerminalFullScreen] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  // Workspace State
   const [workspacePath, setWorkspacePath] = useState<string | null>(null);
   const [workspacePathLoading, setWorkspacePathLoading] = useState(false);
-  const initialPreviewUrl =
-    typeof process !== "undefined" && process.env?.EXPO_PUBLIC_INITIAL_PREVIEW_URL
-      ? process.env.EXPO_PUBLIC_INITIAL_PREVIEW_URL.trim()
-      : null;
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [sidebarVisible, setSidebarVisible] = useState(false);
+
+  // File Viewer State
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [fileIsImage, setFileIsImage] = useState(false);
   const [fileLoading, setFileLoading] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
   const [pendingCodeRefs, setPendingCodeRefs] = useState<CodeRefPayload[]>([]);
+
+  // Terminal State
+  const [terminalCommandInput, setTerminalCommandInput] = useState("");
+
+  // Refs
   const flatListRef = useRef<FlatList>(null);
   const terminalCarouselRef = useRef<FlatList>(null);
   const terminalSelectedByTapRef = useRef(false);
   const lastScrollToEndTimeRef = useRef(0);
-  const SCROLL_TO_END_THROTTLE_MS = 400;
-  const TERMINAL_CARD_GAP = 12;
-  const TERMINAL_CARD_WIDTH =
-    (Dimensions.get("window").width - 32 - TERMINAL_CARD_GAP * 2) / 3;
-  const TERMINAL_CARD_STEP = TERMINAL_CARD_WIDTH + TERMINAL_CARD_GAP;
+  const didOpenInitialPreview = useRef(false);
 
+  // Socket Hook
   const {
     connected,
     messages,
@@ -138,15 +263,13 @@ export default function App() {
     terminateAgent,
     resetSession,
     canRunInSelectedTerminal,
-    mockSequences,
-    selectedSequence,
-    setSelectedSequence,
     lastSessionTerminated,
   } = useSocket({ provider, model });
 
-  const [terminalFullScreen, setTerminalFullScreen] = useState(false);
-  const [terminalCommandInput, setTerminalCommandInput] = useState("");
+  // Performance Monitoring
+  const performanceMetrics = usePerformanceMonitor(__DEV__);
 
+  // Effects
   useEffect(() => {
     if (messages.length > 0) {
       flatListRef.current?.scrollToEnd({ animated: true });
@@ -156,7 +279,10 @@ export default function App() {
   const selectedTerminalIndex =
     selectedTerminalId != null
       ? terminals.findIndex((t) => t.id === selectedTerminalId)
-      : terminals.length > 0 ? terminals.length - 1 : 0;
+      : terminals.length > 0
+        ? terminals.length - 1
+        : 0;
+
   useEffect(() => {
     if (terminals.length === 0 || selectedTerminalIndex < 0) return;
     const index = Math.min(selectedTerminalIndex, terminals.length - 1);
@@ -168,16 +294,6 @@ export default function App() {
       }
     });
   }, [selectedTerminalId, terminals.length, selectedTerminalIndex]);
-
-  // Initial preview URL auto-open disabled so user must run command first, then use Preview.
-  // Previously: __DEV__ + EXPO_PUBLIC_INITIAL_PREVIEW_URL could open preview on load without Run.
-  const didOpenInitialPreview = useRef(false);
-  useEffect(() => {
-    if (__DEV__ && initialPreviewUrl && !didOpenInitialPreview.current) {
-      didOpenInitialPreview.current = true;
-      // setPreviewUrl(serverConfig.resolvePreviewUrl(initialPreviewUrl)); // disabled: enforce run-first
-    }
-  }, [initialPreviewUrl, serverConfig]);
 
   useEffect(() => {
     if (!selectedFilePath) return;
@@ -196,9 +312,11 @@ export default function App() {
         setFileError(err?.message ?? "Failed to load file");
         setFileLoading(false);
       });
-  }, [selectedFilePath]);
+  }, [selectedFilePath, workspaceFileService]);
 
+  // Callbacks
   const handleFileSelect = useCallback((path: string) => {
+    triggerHaptic("selection");
     setSelectedFilePath(path);
   }, []);
 
@@ -210,15 +328,17 @@ export default function App() {
   }, []);
 
   const handleAddCodeReference = useCallback((ref: CodeRefPayload) => {
+    triggerHaptic("light");
     setPendingCodeRefs((prev) => [...prev, ref]);
   }, []);
 
   const handleRemoveCodeRef = useCallback((index: number) => {
+    triggerHaptic("selection");
     setPendingCodeRefs((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
   const handleSubmit = useCallback(
-    (prompt: string, _pm?: string) => {
+    (prompt: string) => {
       const backend = getBackendPermissionMode(permissionModeUI, provider);
       submitPrompt(
         prompt,
@@ -228,7 +348,6 @@ export default function App() {
         backend.approvalMode
       );
       if (pendingCodeRefs.length) setPendingCodeRefs([]);
-      // Return to chat page when sending
       setSidebarVisible(false);
       handleCloseFileViewer();
     },
@@ -236,11 +355,8 @@ export default function App() {
   );
 
   const handleOpenPreviewInApp = useCallback((u: string) => {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/4e3ee01c-fe3e-4a44-9e7a-dacd3fdcc465',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:handleOpenPreviewInApp',message:'Opening preview',data:{url:u?.slice(0,60),hypothesisId:'H4'},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     if (u) setPreviewUrl(serverConfig.resolvePreviewUrl(u));
-  }, []);
+  }, [serverConfig]);
 
   const handleClosePreview = useCallback(() => {
     setPreviewUrl(null);
@@ -251,17 +367,25 @@ export default function App() {
       const term = terminals.find((t) => t.id === terminalId);
       const message =
         term?.pid != null
-          ? `Are you sure you want to terminate this process (PID ${term.pid})? This action cannot be undone.`
-          : "Are you sure you want to terminate this process? This action cannot be undone.";
+          ? `Are you sure you want to terminate this process (PID ${term.pid})?`
+          : "Are you sure you want to terminate this process?";
+      
+      triggerHaptic("warning");
       Alert.alert("Close terminal?", message, [
         { text: "Cancel", style: "cancel" },
-        { text: "Kill", style: "destructive", onPress: () => terminateRunProcess(terminalId) },
+        { 
+          text: "Kill", 
+          style: "destructive", 
+          onPress: () => {
+            triggerHaptic("error");
+            terminateRunProcess(terminalId);
+          }
+        },
       ]);
     },
     [terminals, terminateRunProcess]
   );
 
-  /** Close full-screen terminal window only; do not show terminate-process modal. */
   const handleCloseFullScreenTerminal = useCallback(() => {
     Keyboard.dismiss();
     setTerminalFullScreen(false);
@@ -280,765 +404,727 @@ export default function App() {
     if (settingsVisible) fetchWorkspacePath();
   }, [settingsVisible, fetchWorkspacePath]);
 
+  // ============================================================================
+  // Render
+  // ============================================================================
+
   return (
-    <ThemeProvider provider={provider}>
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar style="dark" />
-      <KeyboardAvoidingView
-        style={styles.keyboardView}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={0}
-      >
-        <View style={styles.page}>
-          <View style={styles.contentArea}>
-            {!sidebarVisible && (
-              <View style={styles.menuButtonOverlay} pointerEvents="box-none">
-                <TouchableOpacity
-                  style={styles.menuButton}
-                  onPress={() => setSidebarVisible(true)}
-                  activeOpacity={0.7}
-                  accessibilityLabel="Open Explorer"
-                >
-                  <Text style={styles.menuButtonText}>☰</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.settingsButton}
-                  onPress={() => setSettingsVisible(true)}
-                  activeOpacity={0.7}
-                  accessibilityLabel="Settings"
-                >
-                  <Text style={styles.settingsButtonText}>⚙</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-            <View style={styles.chatShell}>
-              <FlatList
-              ref={flatListRef}
-              style={styles.chatArea}
-              contentContainerStyle={styles.chatMessages}
-              showsVerticalScrollIndicator={false}
-              showsHorizontalScrollIndicator={false}
-              data={messages}
-              keyExtractor={(item) => item.id}
-              renderItem={({ item, index }) => {
-                const isLast = index === messages.length - 1;
-                const showTerminated =
-                  lastSessionTerminated && isLast && item.role === "assistant" && !item.content;
-                const messageToShow = showTerminated
-                  ? { ...item, content: "Terminated" }
-                  : item;
-                const showTailBox =
-                  isLast &&
-                  item.role === "assistant" &&
-                  hasFileActivityContent(item.content);
-                return (
-                  <MessageBubble
-                    message={messageToShow}
-                    isTerminatedLabel={showTerminated}
-                    showAsTailBox={showTailBox}
-                    tailBoxMaxHeight={Dimensions.get("window").height * 0.5}
-                    onRunBashCommand={runCommandInNewTerminal}
-                    onOpenUrl={handleOpenPreviewInApp}
+    <ThemeProvider provider={provider} colorMode={colorMode}>
+      <SafeAreaView style={styles.safeArea}>
+        <ExpoStatusBar style={theme.mode === "dark" ? "light" : "dark"} />
+        <KeyboardAvoidingView
+          style={styles.keyboardView}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          keyboardVerticalOffset={0}
+        >
+          <View style={styles.page}>
+            {/* Main Content Area */}
+            <View style={styles.contentArea}>
+              {/* Header Buttons */}
+              {!sidebarVisible && (
+                <View style={styles.menuButtonOverlay} pointerEvents="box-none">
+                  <HeaderButton
+                    icon={<MenuIcon color={theme.colors.textPrimary} />}
+                    onPress={() => setSidebarVisible(true)}
+                    accessibilityLabel="Open Explorer"
+                    delay={100}
                   />
-                );
-              }}
-              ListFooterComponent={
-                <>
-                  <TypingIndicator visible={typingIndicator} />
-                  {runRenderResult && (
-                    <View style={styles.runResult}>
-                      <Text
-                        style={[
-                          styles.runResultText,
-                          runRenderResult.ok ? styles.runResultOk : styles.runResultError,
-                        ]}
-                      >
-                        {runRenderResult.message}
-                      </Text>
-                    </View>
-                  )}
-                  <RenderPreviewBar
-                    pendingRender={pendingRender}
-                    hasRunCommandForCurrentRender={hasRunCommandForCurrentRender}
-                    onRunRender={(command, url) => {
-                      runCommandInNewTerminal(command);
-                      if (url) handleOpenPreviewInApp(url);
-                    }}
-                    onOpenPreviewInApp={handleOpenPreviewInApp}
+                  <HeaderButton
+                    icon={<SettingsIcon color={theme.colors.textPrimary} />}
+                    onPress={() => setSettingsVisible(true)}
+                    accessibilityLabel="Settings"
+                    delay={200}
                   />
-                  {pendingRender != null && (
-                    <View style={styles.renderTerminalWrap}>
-                      <RunOutputView
-                        lines={
-                          renderTerminalId
-                            ? (terminals.find((t) => t.id === renderTerminalId)?.lines ?? [])
-                            : []
-                        }
-                        title="Terminal"
-                        command={
-                          renderTerminalId
-                            ? terminals.find((t) => t.id === renderTerminalId)?.lastCommand ?? null
-                            : null
-                        }
-                        showWhenEmpty
-                        onTerminate={
-                          renderTerminalId
-                            ? () => terminateRunProcess(renderTerminalId)
-                            : undefined
-                        }
-                        maxHeight={220}
+                </View>
+              )}
+
+              {/* Chat Area */}
+              <View style={styles.chatShell}>
+                <FlatList
+                  ref={flatListRef}
+                  style={styles.chatArea}
+                  contentContainerStyle={styles.chatMessages}
+                  showsVerticalScrollIndicator={false}
+                  showsHorizontalScrollIndicator={false}
+                  data={messages}
+                  keyExtractor={(item) => item.id}
+                  renderItem={({ item, index }) => {
+                    const isLast = index === messages.length - 1;
+                    const showTerminated =
+                      lastSessionTerminated && isLast && item.role === "assistant" && !item.content;
+                    const messageToShow = showTerminated
+                      ? { ...item, content: "Terminated" }
+                      : item;
+                    const showTailBox =
+                      isLast &&
+                      item.role === "assistant" &&
+                      hasFileActivityContent(item.content);
+                    return (
+                      <MessageBubble
+                        message={messageToShow}
+                        isTerminatedLabel={showTerminated}
+                        showAsTailBox={showTailBox}
+                        tailBoxMaxHeight={Dimensions.get("window").height * 0.5}
+                        onRunBashCommand={runCommandInNewTerminal}
                         onOpenUrl={handleOpenPreviewInApp}
                       />
-                    </View>
-                  )}
-                  {permissionDenials && permissionDenials.length > 0 && (
-                    <PermissionDenialBanner
-                      denials={permissionDenials}
-                      onDismiss={dismissPermission}
-                      onAccept={() => {
-                      const backend = getBackendPermissionMode(permissionModeUI, provider);
-                      retryAfterPermission(backend.permissionMode, backend.approvalMode);
-                    }}
-                    />
-                  )}
-                </>
-              }
-              onContentSizeChange={() => {
-                const now = Date.now();
-                if (now - lastScrollToEndTimeRef.current < SCROLL_TO_END_THROTTLE_MS) return;
-                lastScrollToEndTimeRef.current = now;
-                flatListRef.current?.scrollToEnd({ animated: true });
-              }}
-            />
-            </View>
-
-            <View style={styles.sidebarOverlay} pointerEvents={sidebarVisible ? "auto" : "none"}>
-              <WorkspaceSidebar
-                visible={sidebarVisible}
-                embedded
-                onClose={() => setSidebarVisible(false)}
-                onFileSelect={handleFileSelect}
-              />
-            </View>
-
-            {selectedFilePath != null && (
-              <View style={styles.fileViewerOverlay} pointerEvents="box-none">
-                <FileViewerModal
-                  visible
-                  embedded
-                  path={selectedFilePath}
-                  content={fileContent}
-                  isImage={fileIsImage}
-                  loading={fileLoading}
-                  error={fileError}
-                  onClose={handleCloseFileViewer}
-                  onAddCodeReference={handleAddCodeReference}
+                    );
+                  }}
+                  ListFooterComponent={
+                    <>
+                      <TypingIndicator visible={typingIndicator} />
+                      
+                      {runRenderResult && (
+                        <View style={styles.runResult}>
+                          <Text
+                            style={[
+                              styles.runResultText,
+                              runRenderResult.ok ? styles.runResultOk : styles.runResultError,
+                            ]}
+                          >
+                            {runRenderResult.message}
+                          </Text>
+                        </View>
+                      )}
+                      
+                      <RenderPreviewBar
+                        pendingRender={pendingRender}
+                        hasRunCommandForCurrentRender={hasRunCommandForCurrentRender}
+                        onRunRender={(command, url) => {
+                          runCommandInNewTerminal(command);
+                          if (url) handleOpenPreviewInApp(url);
+                        }}
+                        onOpenPreviewInApp={handleOpenPreviewInApp}
+                      />
+                      
+                      {pendingRender != null && (
+                        <View style={styles.renderTerminalWrap}>
+                          <RunOutputView
+                            lines={
+                              renderTerminalId
+                                ? terminals.find((t) => t.id === renderTerminalId)?.lines ?? []
+                                : []
+                            }
+                            title="Terminal"
+                            command={
+                              renderTerminalId
+                                ? terminals.find((t) => t.id === renderTerminalId)?.lastCommand ?? null
+                                : null
+                            }
+                            showWhenEmpty
+                            onTerminate={
+                              renderTerminalId
+                                ? () => terminateRunProcess(renderTerminalId)
+                                : undefined
+                            }
+                            maxHeight={220}
+                            onOpenUrl={handleOpenPreviewInApp}
+                          />
+                        </View>
+                      )}
+                      
+                      {permissionDenials && permissionDenials.length > 0 && (
+                        <PermissionDenialBanner
+                          denials={permissionDenials}
+                          onDismiss={dismissPermission}
+                          onAccept={() => {
+                            const backend = getBackendPermissionMode(permissionModeUI, provider);
+                            retryAfterPermission(backend.permissionMode, backend.approvalMode);
+                          }}
+                        />
+                      )}
+                    </>
+                  }
+                  onContentSizeChange={() => {
+                    const now = Date.now();
+                    if (now - lastScrollToEndTimeRef.current < 400) return;
+                    lastScrollToEndTimeRef.current = now;
+                    flatListRef.current?.scrollToEnd({ animated: true });
+                  }}
                 />
               </View>
-            )}
-          </View>
 
-          <View style={styles.inputBar}>
-            <InputPanel
-              connected={connected}
-              claudeRunning={claudeRunning}
-              waitingForUserInput={waitingForUserInput}
-              permissionMode={((): string | null => {
-                const b = getBackendPermissionMode(permissionModeUI, provider);
-                return b.permissionMode ?? b.approvalMode ?? null;
-              })()}
-              onPermissionModeChange={() => {}}
-              onSubmit={handleSubmit}
-              pendingCodeRefs={pendingCodeRefs}
-              onRemoveCodeRef={handleRemoveCodeRef}
-              showTerminalButton={terminals.length > 0}
-              runProcessActive={runProcessActive}
-              onShowTerminal={() => flatListRef.current?.scrollToEnd({ animated: true })}
-              onOpenTerminal={() => setTerminalFullScreen(true)}
-              onTerminateAgent={terminateAgent}
-              onOpenWebPreview={() => setPreviewUrl("")}
-              provider={provider}
-              model={model}
-              modelOptions={modelOptions}
-              onProviderChange={setProviderAndModel}
-              onModelChange={setModel}
-            />
-          </View>
-        </View>
-
-        <AskQuestionModal
-          pending={pendingAskQuestion}
-          onSubmit={submitAskQuestionAnswer}
-          onCancel={dismissAskQuestion}
-        />
-
-        <SettingsModal
-          visible={settingsVisible}
-          onClose={() => setSettingsVisible(false)}
-          provider={provider}
-          setProviderAndModel={setProviderAndModel}
-          model={model}
-          setModel={setModel}
-          modelOptions={modelOptions}
-          permissionMode={permissionModeUI}
-          onPermissionModeChange={setPermissionModeUI}
-          onStopSession={terminateAgent}
-          onNewSession={() => {
-            resetSession();
-            setSettingsVisible(false);
-          }}
-          claudeRunning={claudeRunning}
-          workspacePath={workspacePath}
-          workspaceLoading={workspacePathLoading}
-          onRefreshWorkspace={fetchWorkspacePath}
-          serverBaseUrl={serverConfig.getBaseUrl()}
-        />
-
-        <PreviewWebViewModal
-          visible={previewUrl != null}
-          url={previewUrl ?? ""}
-          title="Preview"
-          onClose={handleClosePreview}
-        />
-
-        <Modal
-          visible={terminalFullScreen}
-          animationType="slide"
-          onRequestClose={handleCloseFullScreenTerminal}
-        >
-          <SafeAreaView style={styles.fullScreenTerminalSafe}>
-            <View style={styles.fullScreenTerminalHeader}>
-              <Text style={styles.fullScreenTerminalTitle}>Terminal management</Text>
-              <View style={styles.fullScreenTerminalHeaderActions}>
-                <TouchableOpacity
-                  onPress={runNewTerminal}
-                  hitSlop={8}
-                  style={styles.fullScreenNewTerminalButton}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.fullScreenNewTerminalText}>New</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={handleCloseFullScreenTerminal}
-                  hitSlop={12}
-                  style={styles.fullScreenCloseButton}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.fullScreenCloseText}>Close</Text>
-                </TouchableOpacity>
+              {/* Sidebar Overlay */}
+              <View style={styles.sidebarOverlay} pointerEvents={sidebarVisible ? "auto" : "none"}>
+                <WorkspaceSidebar
+                  visible={sidebarVisible}
+                  embedded
+                  onClose={() => setSidebarVisible(false)}
+                  onFileSelect={handleFileSelect}
+                />
               </View>
+
+              {/* File Viewer Overlay */}
+              {selectedFilePath != null && (
+                <View style={styles.fileViewerOverlay} pointerEvents="box-none">
+                  <FileViewerModal
+                    visible
+                    embedded
+                    path={selectedFilePath}
+                    content={fileContent}
+                    isImage={fileIsImage}
+                    loading={fileLoading}
+                    error={fileError}
+                    onClose={handleCloseFileViewer}
+                    onAddCodeReference={handleAddCodeReference}
+                  />
+                </View>
+              )}
             </View>
-            <View style={styles.fullScreenTerminalContent}>
-              {terminals.length > 0 ? (
-                <>
-                  <View style={styles.fullScreenTerminalListHeader}>
-                    <Text style={styles.fullScreenTerminalListTitle}>Processes</Text>
-                  </View>
-                  <FlatList
-                    ref={terminalCarouselRef}
-                    data={terminals}
-                    keyExtractor={(t) => t.id}
-                    horizontal
-                    pagingEnabled={false}
-                    snapToInterval={TERMINAL_CARD_STEP}
-                    snapToAlignment="start"
-                    decelerationRate="fast"
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.fullScreenTerminalCarouselContent}
-                    style={styles.fullScreenTerminalCarousel}
-                    getItemLayout={(_: unknown, index: number) => ({
-                      length: TERMINAL_CARD_STEP,
-                      offset: TERMINAL_CARD_STEP * index,
-                      index,
-                    })}
-                    onMomentumScrollEnd={(e) => {
-                      if (terminalSelectedByTapRef.current) {
-                        terminalSelectedByTapRef.current = false;
-                        return;
-                      }
-                      const index = Math.round(
-                        e.nativeEvent.contentOffset.x / TERMINAL_CARD_STEP
-                      );
-                      if (index >= 0 && index < terminals.length) {
-                        setSelectedTerminalId(terminals[index].id);
-                      }
+
+            {/* Input Panel */}
+            <View style={styles.inputBar}>
+              <InputPanel
+                connected={connected}
+                claudeRunning={claudeRunning}
+                waitingForUserInput={waitingForUserInput}
+                permissionMode={(() => {
+                  const b = getBackendPermissionMode(permissionModeUI, provider);
+                  return b.permissionMode ?? b.approvalMode ?? null;
+                })()}
+                onPermissionModeChange={() => {}}
+                onSubmit={handleSubmit}
+                pendingCodeRefs={pendingCodeRefs}
+                onRemoveCodeRef={handleRemoveCodeRef}
+                showTerminalButton={terminals.length > 0}
+                runProcessActive={runProcessActive}
+                onShowTerminal={() => flatListRef.current?.scrollToEnd({ animated: true })}
+                onOpenTerminal={() => setTerminalFullScreen(true)}
+                onTerminateAgent={terminateAgent}
+                onOpenWebPreview={() => setPreviewUrl("")}
+                provider={provider}
+                model={model}
+                modelOptions={modelOptions}
+                onProviderChange={setProviderAndModel}
+                onModelChange={setModel}
+              />
+            </View>
+          </View>
+
+          {/* Ask Question Modal */}
+          <AskQuestionModal
+            pending={pendingAskQuestion}
+            onSubmit={submitAskQuestionAnswer}
+            onCancel={dismissAskQuestion}
+          />
+
+          {/* Settings Modal */}
+          <SettingsModal
+            visible={settingsVisible}
+            onClose={() => setSettingsVisible(false)}
+            provider={provider}
+            setProviderAndModel={setProviderAndModel}
+            model={model}
+            setModel={setModel}
+            modelOptions={modelOptions}
+            permissionMode={permissionModeUI}
+            onPermissionModeChange={setPermissionModeUI}
+            onStopSession={terminateAgent}
+            onNewSession={() => {
+              resetSession();
+              setSettingsVisible(false);
+            }}
+            claudeRunning={claudeRunning}
+            workspacePath={workspacePath}
+            workspaceLoading={workspacePathLoading}
+            onRefreshWorkspace={fetchWorkspacePath}
+            serverBaseUrl={serverConfig.getBaseUrl()}
+            colorMode={colorMode}
+            onColorModeChange={setColorMode}
+          />
+
+          {/* Preview WebView Modal */}
+          <PreviewWebViewModal
+            visible={previewUrl != null}
+            url={previewUrl ?? ""}
+            title="Preview"
+            onClose={handleClosePreview}
+          />
+
+          {/* Full Screen Terminal Modal */}
+          <Modal
+            visible={terminalFullScreen}
+            animationType="slide"
+            onRequestClose={handleCloseFullScreenTerminal}
+          >
+            <SafeAreaView style={styles.fullScreenTerminalSafe}>
+              {/* Terminal Header */}
+              <View style={styles.fullScreenTerminalHeader}>
+                <Text style={styles.fullScreenTerminalTitle}>Terminal</Text>
+                <View style={styles.fullScreenTerminalHeaderActions}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      triggerHaptic("selection");
+                      runNewTerminal();
                     }}
-                    renderItem={({ item: term }) => {
-                      const isSelected = term.id === selectedTerminalId;
-                      return (
-                        <TouchableOpacity
-                          style={[
-                            styles.fullScreenTerminalCard,
-                            { width: TERMINAL_CARD_WIDTH },
-                            isSelected && styles.fullScreenTerminalCardSelected,
-                          ]}
-                          onPress={() => {
-                            terminalSelectedByTapRef.current = true;
-                            setSelectedTerminalId(term.id);
-                          }}
-                          activeOpacity={1}
-                        >
-                          <View style={styles.fullScreenTerminalCardInner}>
-                            <View style={styles.fullScreenTerminalCardTopRow}>
-                              <View
-                                style={[
-                                  styles.fullScreenTerminalStatusBadge,
-                                  term.active ? styles.fullScreenTerminalStatusRunning : styles.fullScreenTerminalStatusIdle,
-                                ]}
-                              >
-                                <Text style={styles.fullScreenTerminalStatusText}>
-                                  {term.active ? "Running" : "Idle"}
-                                </Text>
-                              </View>
-                              <View style={styles.fullScreenTerminalCloseRowButtonWrap} pointerEvents="box-none">
+                    hitSlop={8}
+                    style={styles.fullScreenNewTerminalButton}
+                  >
+                    <Text style={styles.fullScreenNewTerminalText}>New</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={handleCloseFullScreenTerminal}
+                    hitSlop={12}
+                    style={styles.fullScreenCloseButton}
+                  >
+                    <Text style={styles.fullScreenCloseText}>Close</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Terminal Content */}
+              <View style={styles.fullScreenTerminalContent}>
+                {terminals.length > 0 ? (
+                  <>
+                    {/* Terminal Carousel */}
+                    <View style={styles.fullScreenTerminalListHeader}>
+                      <Text style={styles.fullScreenTerminalListTitle}>Processes</Text>
+                    </View>
+                    <FlatList
+                      ref={terminalCarouselRef}
+                      data={terminals}
+                      keyExtractor={(t) => t.id}
+                      horizontal
+                      pagingEnabled={false}
+                      snapToInterval={TERMINAL_CARD_STEP}
+                      snapToAlignment="start"
+                      decelerationRate="fast"
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={styles.fullScreenTerminalCarouselContent}
+                      style={styles.fullScreenTerminalCarousel}
+                      getItemLayout={(_, index: number) => ({
+                        length: TERMINAL_CARD_STEP,
+                        offset: TERMINAL_CARD_STEP * index,
+                        index,
+                      })}
+                      onMomentumScrollEnd={(e) => {
+                        if (terminalSelectedByTapRef.current) {
+                          terminalSelectedByTapRef.current = false;
+                          return;
+                        }
+                        const index = Math.round(
+                          e.nativeEvent.contentOffset.x / TERMINAL_CARD_STEP
+                        );
+                        if (index >= 0 && index < terminals.length) {
+                          setSelectedTerminalId(terminals[index].id);
+                        }
+                      }}
+                      renderItem={({ item: term }) => {
+                        const isSelected = term.id === selectedTerminalId;
+                        return (
+                          <TouchableOpacity
+                            style={[
+                              styles.fullScreenTerminalCard,
+                              { width: TERMINAL_CARD_WIDTH },
+                              isSelected && styles.fullScreenTerminalCardSelected,
+                            ]}
+                            onPress={() => {
+                              terminalSelectedByTapRef.current = true;
+                              setSelectedTerminalId(term.id);
+                              triggerHaptic("selection");
+                            }}
+                          >
+                            <View style={styles.fullScreenTerminalCardInner}>
+                              <View style={styles.fullScreenTerminalCardTopRow}>
+                                <View
+                                  style={[
+                                    styles.fullScreenTerminalStatusBadge,
+                                    term.active
+                                      ? styles.fullScreenTerminalStatusRunning
+                                      : styles.fullScreenTerminalStatusIdle,
+                                  ]}
+                                >
+                                  <Text style={styles.fullScreenTerminalStatusText}>
+                                    {term.active ? "Running" : "Idle"}
+                                  </Text>
+                                </View>
                                 <TouchableOpacity
                                   onPress={() => handleRequestTerminate(term.id)}
                                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                                   style={styles.fullScreenTerminalCloseRowButton}
-                                  activeOpacity={0.7}
                                 >
                                   <Text style={styles.fullScreenTerminalCloseRowIcon}>×</Text>
                                 </TouchableOpacity>
                               </View>
+                              {term.pid != null && (
+                                <Text style={styles.fullScreenTerminalPid}>PID {term.pid}</Text>
+                              )}
                             </View>
-                            {term.pid != null && (
-                              <Text style={styles.fullScreenTerminalPid}>PID {term.pid}</Text>
-                            )}
-                          </View>
-                        </TouchableOpacity>
-                      );
-                    }}
-                  />
-                  <View style={styles.fullScreenTerminalOutputWrap}>
-                    <RunOutputView
-                      lines={runOutputLines}
-                      command={runCommand}
-                      title="Output"
-                      showWhenEmpty
-                      flexOutput
-                      onTerminate={
-                        (selectedTerminalId ?? terminals[terminals.length - 1]?.id)
-                          ? () =>
-                              handleRequestTerminate(
-                                selectedTerminalId ?? terminals[terminals.length - 1]!.id
-                              )
-                          : undefined
-                      }
-                      onOpenUrl={handleOpenPreviewInApp}
+                          </TouchableOpacity>
+                        );
+                      }}
                     />
-                    {(() => {
-                      const inputState = getTerminalInputState(
-                        selectedTerminalId,
-                        terminals,
-                        canRunInSelectedTerminal
-                      );
-                      if (inputState === "disabled") {
+
+                    {/* Terminal Output */}
+                    <View style={styles.fullScreenTerminalOutputWrap}>
+                      <RunOutputView
+                        lines={runOutputLines}
+                        command={runCommand}
+                        title="Output"
+                        showWhenEmpty
+                        flexOutput
+                        onTerminate={
+                          (selectedTerminalId ?? terminals[terminals.length - 1]?.id)
+                            ? () =>
+                                handleRequestTerminate(
+                                  selectedTerminalId ?? terminals[terminals.length - 1]!.id
+                                )
+                            : undefined
+                        }
+                        onOpenUrl={handleOpenPreviewInApp}
+                      />
+
+                      {/* Terminal Input */}
+                      {(() => {
+                        const inputState = getTerminalInputState(
+                          selectedTerminalId,
+                          terminals,
+                          canRunInSelectedTerminal
+                        );
+                        if (inputState === "disabled") {
+                          return (
+                            <View style={styles.terminalCommandDisabledHint}>
+                              <Text style={styles.terminalCommandDisabledText}>
+                                Command running. Terminate to run another.
+                              </Text>
+                            </View>
+                          );
+                        }
+                        if (inputState !== "enabled") return null;
                         return (
-                          <View style={styles.terminalCommandDisabledHint}>
-                            <Text style={styles.terminalCommandDisabledText}>
-                              Command running. Terminate to run another.
-                            </Text>
+                          <View style={styles.terminalCommandRow}>
+                            <TextInput
+                              style={styles.terminalCommandInput}
+                              placeholder="Type a command…"
+                              placeholderTextColor={theme.colors.textMuted}
+                              value={terminalCommandInput}
+                              onChangeText={setTerminalCommandInput}
+                              onSubmitEditing={() => {
+                                if (terminalCommandInput.trim()) {
+                                  triggerHaptic("light");
+                                  runUserCommand(terminalCommandInput.trim());
+                                  setTerminalCommandInput("");
+                                }
+                              }}
+                              returnKeyType="send"
+                            />
+                            <TouchableOpacity
+                              style={styles.terminalCommandRunButton}
+                              onPress={() => {
+                                if (terminalCommandInput.trim()) {
+                                  triggerHaptic("success");
+                                  runUserCommand(terminalCommandInput.trim());
+                                  setTerminalCommandInput("");
+                                }
+                              }}
+                            >
+                              <Text style={styles.terminalCommandRunText}>Run</Text>
+                            </TouchableOpacity>
                           </View>
                         );
-                      }
-                      if (inputState !== "enabled") return null;
-                      return (
-                        <View style={styles.terminalCommandRow}>
-                          <TextInput
-                            style={styles.terminalCommandInput}
-                            placeholder="Type a command…"
-                            placeholderTextColor={theme.textMuted}
-                            value={terminalCommandInput}
-                            onChangeText={setTerminalCommandInput}
-                            onSubmitEditing={() => {
-                              if (terminalCommandInput.trim()) {
-                                runUserCommand(terminalCommandInput.trim());
-                                setTerminalCommandInput("");
-                              }
-                            }}
-                            returnKeyType="send"
-                          />
-                          <TouchableOpacity
-                            style={styles.terminalCommandRunButton}
-                            onPress={() => {
-                              if (terminalCommandInput.trim()) {
-                                runUserCommand(terminalCommandInput.trim());
-                                setTerminalCommandInput("");
-                              }
-                            }}
-                            activeOpacity={0.8}
-                          >
-                            <Text style={styles.terminalCommandRunText}>Run</Text>
-                          </TouchableOpacity>
-                        </View>
-                      );
-                    })()}
+                      })()}
+                    </View>
+                  </>
+                ) : (
+                  <View style={styles.fullScreenTerminalEmpty}>
+                    <Text style={styles.fullScreenTerminalEmptyText}>
+                      No terminals. Run a command from the chat or tap "New" to open a shell.
+                    </Text>
                   </View>
-                </>
-              ) : (
-                <View style={styles.fullScreenTerminalEmpty}>
-                  <Text style={styles.fullScreenTerminalEmptyText}>
-                    No terminals. Run a command from the chat or tap "New" to open a shell.
-                  </Text>
-                </View>
-              )}
-            </View>
-          </SafeAreaView>
-        </Modal>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+                )}
+              </View>
+            </SafeAreaView>
+          </Modal>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
     </ThemeProvider>
   );
 }
 
+// ============================================================================
+// Styles
+// ============================================================================
+
 function createAppStyles(theme: ReturnType<typeof getTheme>) {
   return StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: theme.beigeBg,
-  },
-  keyboardView: {
-    flex: 1,
-  },
-  page: {
-    flex: 1,
-    flexDirection: "column",
-    paddingHorizontal: 24,
-    paddingTop: 8,
-    paddingBottom: 16,
-  },
-  contentArea: {
-    flex: 1,
-    flexShrink: 1,
-    minHeight: 0,
-    position: "relative",
-    overflow: "hidden",
-  },
-  sidebarOverlay: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    zIndex: 5,
-  },
-  fileViewerOverlay: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    zIndex: 6,
-  },
-  menuButtonOverlay: {
-    position: "absolute",
-    top: -8,
-    left: 0,
-    right: 0,
-    height: 56,
-    zIndex: 10,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 8,
-  },
-  menuButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "transparent",
-    borderWidth: 1,
-    borderColor: theme.borderColor,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  menuButtonText: {
-    fontSize: 22,
-    color: theme.textPrimary,
-  },
-  settingsButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "transparent",
-    borderWidth: 1,
-    borderColor: theme.borderColor,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  settingsButtonText: {
-    fontSize: 20,
-    color: theme.textPrimary,
-  },
-  chatShell: {
-    flex: 1,
-    marginTop: 22,
-    minHeight: 0,
-  },
-  chatArea: {
-    flex: 1,
-  },
-  inputBar: {
-    flexShrink: 0,
-    flexGrow: 0,
-    paddingTop: 12,
-    paddingBottom: 8,
-  },
-  sequencePicker: {
-    maxHeight: 40,
-    marginBottom: 8,
-  },
-  sequencePickerContent: {
-    flexDirection: "row",
-    gap: 8,
-    paddingHorizontal: 16,
-  },
-  sequenceChip: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 999,
-    backgroundColor: theme.cardBg,
-    borderWidth: 1,
-    borderColor: theme.borderColor,
-  },
-  sequenceChipSelected: {
-    backgroundColor: theme.accentLight,
-    borderColor: theme.accent,
-  },
-  sequenceChipText: {
-    fontSize: 13,
-    color: theme.textMuted,
-  },
-  sequenceChipTextSelected: {
-    color: theme.accent,
-    fontWeight: "600",
-  },
-  chatMessages: {
-    paddingVertical: 12,
-    gap: 16,
-    paddingBottom: 24,
-  },
-  runResult: {
-    paddingVertical: 8,
-    paddingLeft: 48,
-  },
-  runResultText: {
-    fontSize: 14,
-  },
-  runResultOk: {
-    color: theme.success,
-  },
-  runResultError: {
-    color: theme.danger,
-  },
-  renderTerminalWrap: {
-    marginTop: 10,
-    width: "100%",
-  },
-  fullScreenTerminalSafe: {
-    flex: 1,
-    backgroundColor: theme.beigeBg,
-  },
-  fullScreenTerminalHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.borderColor,
-    backgroundColor: theme.surfaceBg,
-  },
-  fullScreenTerminalTitle: {
-    fontSize: 17,
-    fontWeight: "600",
-    color: theme.textPrimary,
-  },
-  fullScreenTerminalHeaderActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  fullScreenNewTerminalButton: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: theme.accent,
-  },
-  fullScreenNewTerminalText: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: theme.accent,
-  },
-  fullScreenCloseButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    backgroundColor: theme.accent,
-    borderRadius: 8,
-  },
-  fullScreenCloseText: {
-    fontSize: 15,
-    color: "#fff",
-    fontWeight: "600",
-  },
-  fullScreenTerminalContent: {
-    flex: 1,
-    paddingHorizontal: 16,
-    paddingBottom: 16,
-    minHeight: 0,
-  },
-  fullScreenTerminalListHeader: {
-    paddingVertical: 8,
-  },
-  fullScreenTerminalListTitle: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: theme.textMuted,
-  },
-  fullScreenTerminalCarousel: {
-    maxHeight: 72,
-    marginBottom: 12,
-  },
-  fullScreenTerminalCarouselContent: {
-    paddingRight: 16,
-  },
-  fullScreenTerminalCard: {
-    marginRight: 12,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: theme.borderColor,
-    backgroundColor: theme.surfaceBg,
-    overflow: "hidden",
-    paddingTop: 6,
-    paddingBottom: 8,
-    paddingHorizontal: 10,
-  },
-  fullScreenTerminalCardSelected: {
-    borderColor: theme.accent,
-    backgroundColor: theme.beigeBg,
-    borderWidth: 1.5,
-  },
-  fullScreenTerminalCardInner: {
-    flex: 1,
-    flexDirection: "column",
-    justifyContent: "space-between",
-    minHeight: 44,
-  },
-  fullScreenTerminalCardTopRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  fullScreenTerminalStatusBadge: {
-    alignSelf: "flex-start",
-    marginLeft: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  fullScreenTerminalStatusRunning: {
-    backgroundColor: theme.success + "28",
-  },
-  fullScreenTerminalStatusIdle: {
-    backgroundColor: theme.textMuted + "20",
-  },
-  fullScreenTerminalStatusText: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: theme.textPrimary,
-    letterSpacing: 0.2,
-  },
-  fullScreenTerminalPid: {
-    fontSize: 12,
-    color: theme.textMuted,
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-    letterSpacing: 0.3,
-    alignSelf: "center",
-  },
-  fullScreenTerminalRowLabel: {
-    fontSize: 12,
-    color: theme.textMuted,
-  },
-  fullScreenTerminalRowLabelSelected: {
-    color: theme.textPrimary,
-    fontWeight: "500",
-  },
-  fullScreenTerminalCloseRowButtonWrap: {
-    zIndex: 10,
-  },
-  fullScreenTerminalCloseRowButton: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: theme.danger + "22",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  fullScreenTerminalCloseRowIcon: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: theme.danger,
-    lineHeight: 14,
-  },
-  fullScreenTerminalOutputWrap: {
-    flex: 1,
-    minHeight: 0,
-  },
-  fullScreenTerminalEmpty: {
-    flex: 1,
-    justifyContent: "center",
-    padding: 24,
-  },
-  fullScreenTerminalEmptyText: {
-    fontSize: 15,
-    color: theme.textMuted,
-    textAlign: "center",
-  },
-  terminalCommandDisabledHint: {
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderTopWidth: 1,
-    borderTopColor: theme.borderColor,
-    backgroundColor: theme.beigeBg,
-  },
-  terminalCommandDisabledText: {
-    fontSize: 13,
-    color: theme.textMuted,
-    textAlign: "center",
-  },
-  terminalCommandRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderTopWidth: 1,
-    borderTopColor: theme.borderColor,
-    backgroundColor: theme.surfaceBg,
-  },
-  terminalCommandInput: {
-    flex: 1,
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-    fontSize: 14,
-    color: theme.textPrimary,
-    backgroundColor: theme.beigeBg,
-    borderWidth: 1,
-    borderColor: theme.borderColor,
-    borderRadius: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-  },
-  terminalCommandRunButton: {
-    paddingVertical: 10,
-    paddingHorizontal: 18,
-    backgroundColor: theme.accent,
-    borderRadius: 8,
-  },
-  terminalCommandRunText: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#fff",
-  },
+    safeArea: {
+      flex: 1,
+      backgroundColor: theme.colors.background,
+    },
+    keyboardView: {
+      flex: 1,
+    },
+    page: {
+      flex: 1,
+      flexDirection: "column",
+      paddingHorizontal: 24,
+      paddingTop: 8,
+      paddingBottom: 16,
+    },
+    contentArea: {
+      flex: 1,
+      flexShrink: 1,
+      minHeight: 0,
+      position: "relative",
+      overflow: "hidden",
+    },
+    sidebarOverlay: {
+      position: "absolute",
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      zIndex: 5,
+    },
+    fileViewerOverlay: {
+      position: "absolute",
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      zIndex: 6,
+    },
+    menuButtonOverlay: {
+      position: "absolute",
+      top: -8,
+      left: 0,
+      right: 0,
+      height: 56,
+      zIndex: 10,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      paddingHorizontal: 8,
+    },
+    chatShell: {
+      flex: 1,
+      marginTop: 22,
+      minHeight: 0,
+    },
+    chatArea: {
+      flex: 1,
+    },
+    inputBar: {
+      flexShrink: 0,
+      flexGrow: 0,
+      paddingTop: 12,
+      paddingBottom: 8,
+    },
+    chatMessages: {
+      paddingVertical: 12,
+      gap: 16,
+      paddingBottom: 24,
+    },
+    runResult: {
+      paddingVertical: 8,
+      paddingLeft: 48,
+    },
+    runResultText: {
+      fontSize: 14,
+    },
+    runResultOk: {
+      color: theme.colors.success,
+    },
+    runResultError: {
+      color: theme.colors.danger,
+    },
+    renderTerminalWrap: {
+      marginTop: 10,
+      width: "100%",
+    },
+    fullScreenTerminalSafe: {
+      flex: 1,
+      backgroundColor: theme.colors.background,
+    },
+    fullScreenTerminalHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.colors.border,
+      backgroundColor: theme.colors.surfaceAlt,
+    },
+    fullScreenTerminalTitle: {
+      fontSize: 17,
+      fontWeight: "600",
+      color: theme.colors.textPrimary,
+    },
+    fullScreenTerminalHeaderActions: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+    },
+    fullScreenNewTerminalButton: {
+      paddingVertical: 6,
+      paddingHorizontal: 12,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: theme.colors.accent,
+    },
+    fullScreenNewTerminalText: {
+      fontSize: 14,
+      fontWeight: "600",
+      color: theme.colors.accent,
+    },
+    fullScreenCloseButton: {
+      paddingVertical: 8,
+      paddingHorizontal: 16,
+      backgroundColor: theme.colors.accent,
+      borderRadius: 8,
+    },
+    fullScreenCloseText: {
+      fontSize: 15,
+      color: "#fff",
+      fontWeight: "600",
+    },
+    fullScreenTerminalContent: {
+      flex: 1,
+      paddingHorizontal: 16,
+      paddingBottom: 16,
+      minHeight: 0,
+    },
+    fullScreenTerminalListHeader: {
+      paddingVertical: 8,
+    },
+    fullScreenTerminalListTitle: {
+      fontSize: 13,
+      fontWeight: "600",
+      color: theme.colors.textMuted,
+    },
+    fullScreenTerminalCarousel: {
+      maxHeight: 72,
+      marginBottom: 12,
+    },
+    fullScreenTerminalCarouselContent: {
+      paddingRight: 16,
+    },
+    fullScreenTerminalCard: {
+      marginRight: 12,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.surfaceAlt,
+      overflow: "hidden",
+      paddingTop: 6,
+      paddingBottom: 8,
+      paddingHorizontal: 10,
+    },
+    fullScreenTerminalCardSelected: {
+      borderColor: theme.colors.accent,
+      backgroundColor: theme.colors.background,
+      borderWidth: 1.5,
+    },
+    fullScreenTerminalCardInner: {
+      flex: 1,
+      flexDirection: "column",
+      justifyContent: "space-between",
+      minHeight: 44,
+    },
+    fullScreenTerminalCardTopRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+    },
+    fullScreenTerminalStatusBadge: {
+      alignSelf: "flex-start",
+      marginLeft: 4,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 6,
+    },
+    fullScreenTerminalStatusRunning: {
+      backgroundColor: theme.colors.success + "28",
+    },
+    fullScreenTerminalStatusIdle: {
+      backgroundColor: theme.colors.textMuted + "20",
+    },
+    fullScreenTerminalStatusText: {
+      fontSize: 11,
+      fontWeight: "700",
+      color: theme.colors.textPrimary,
+      letterSpacing: 0.2,
+    },
+    fullScreenTerminalPid: {
+      fontSize: 12,
+      color: theme.colors.textMuted,
+      fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+      letterSpacing: 0.3,
+      alignSelf: "center",
+    },
+    fullScreenTerminalCloseRowButton: {
+      width: 20,
+      height: 20,
+      borderRadius: 10,
+      backgroundColor: theme.colors.danger + "22",
+      justifyContent: "center",
+      alignItems: "center",
+    },
+    fullScreenTerminalCloseRowIcon: {
+      fontSize: 12,
+      fontWeight: "600",
+      color: theme.colors.danger,
+      lineHeight: 14,
+    },
+    fullScreenTerminalOutputWrap: {
+      flex: 1,
+      minHeight: 0,
+    },
+    fullScreenTerminalEmpty: {
+      flex: 1,
+      justifyContent: "center",
+      padding: 24,
+    },
+    fullScreenTerminalEmptyText: {
+      fontSize: 15,
+      color: theme.colors.textMuted,
+      textAlign: "center",
+    },
+    terminalCommandDisabledHint: {
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      borderTopWidth: 1,
+      borderTopColor: theme.colors.border,
+      backgroundColor: theme.colors.background,
+    },
+    terminalCommandDisabledText: {
+      fontSize: 13,
+      color: theme.colors.textMuted,
+      textAlign: "center",
+    },
+    terminalCommandRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      borderTopWidth: 1,
+      borderTopColor: theme.colors.border,
+      backgroundColor: theme.colors.surfaceAlt,
+    },
+    terminalCommandInput: {
+      flex: 1,
+      fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+      fontSize: 14,
+      color: theme.colors.textPrimary,
+      backgroundColor: theme.colors.background,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      borderRadius: 8,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+    },
+    terminalCommandRunButton: {
+      paddingVertical: 10,
+      paddingHorizontal: 18,
+      backgroundColor: theme.colors.accent,
+      borderRadius: 8,
+    },
+    terminalCommandRunText: {
+      fontSize: 14,
+      fontWeight: "600",
+      color: "#fff",
+    },
   });
 }

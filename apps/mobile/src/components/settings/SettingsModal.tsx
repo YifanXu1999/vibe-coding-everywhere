@@ -2,15 +2,16 @@ import React, { useMemo, useState, useCallback, useEffect } from "react";
 import {
   View,
   Text,
+  TouchableOpacity,
   StyleSheet,
   Modal,
-  TouchableOpacity,
   ScrollView,
   SafeAreaView,
   Platform,
   ActivityIndicator,
 } from "react-native";
-import { useTheme } from "../../theme/index";
+import { AppButton, AppPressable, AppText } from "../../design-system";
+import { useTheme, type ColorModePreference } from "../../theme/index";
 import type { Provider } from "../../theme/index";
 
 export type PermissionModeUI = "always_ask" | "ask_once_per_session" | "yolo";
@@ -33,6 +34,8 @@ export interface SettingsModalProps {
   modelOptions: { value: string; label: string }[];
   permissionMode: PermissionModeUI;
   onPermissionModeChange: (mode: PermissionModeUI) => void;
+  colorMode: ColorModePreference;
+  onColorModeChange: (mode: ColorModePreference) => void;
   onStopSession: () => void;
   onNewSession: () => void;
   claudeRunning: boolean;
@@ -53,6 +56,8 @@ export function SettingsModal({
   modelOptions,
   permissionMode,
   onPermissionModeChange,
+  colorMode,
+  onColorModeChange,
   onStopSession,
   onNewSession,
   claudeRunning,
@@ -205,21 +210,17 @@ export function SettingsModal({
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>Session Management</Text>
                 <View style={styles.row}>
-                  <TouchableOpacity
-                    style={[styles.actionBtn, claudeRunning && styles.actionBtnDanger]}
+                  <AppButton
+                    label="Stop current session"
+                    variant={claudeRunning ? "danger" : "secondary"}
                     onPress={onStopSession}
                     disabled={!claudeRunning}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.actionBtnText}>Stop current session</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.actionBtn}
+                  />
+                  <AppButton
+                    label="New session"
+                    variant="primary"
                     onPress={onNewSession}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.actionBtnText}>New session</Text>
-                  </TouchableOpacity>
+                  />
                 </View>
               </View>
 
@@ -231,17 +232,17 @@ export function SettingsModal({
                     {workspaceLoading ? "Loading…" : workspacePath ?? "—"}
                   </Text>
                   <View style={styles.workspaceActions}>
-                    <TouchableOpacity
-                      style={styles.changeWorkspaceBtn}
+                    <AppButton
+                      label="Change…"
+                      variant="ghost"
                       onPress={() => setShowWorkspacePicker(true)}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={styles.refreshWorkspaceText}>Change…</Text>
-                    </TouchableOpacity>
+                    />
                     {onRefreshWorkspace && (
-                      <TouchableOpacity style={styles.refreshWorkspaceBtn} onPress={onRefreshWorkspace} activeOpacity={0.8}>
-                        <Text style={styles.refreshWorkspaceText}>Refresh</Text>
-                      </TouchableOpacity>
+                      <AppButton
+                        label="Refresh"
+                        variant="ghost"
+                        onPress={onRefreshWorkspace}
+                      />
                     )}
                   </View>
                 </View>
@@ -275,14 +276,12 @@ export function SettingsModal({
                           </Text>
                         </View>
                         {browseParent ? (
-                          <TouchableOpacity
-                            style={styles.useThisFolderBtn}
+                          <AppButton
+                            label="Use this folder"
+                            variant="primary"
                             onPress={() => handleSelectWorkspace(currentBrowseFullPath)}
                             disabled={pickerLoading}
-                            activeOpacity={0.8}
-                          >
-                            <Text style={styles.useThisFolderText}>Use this folder</Text>
-                          </TouchableOpacity>
+                          />
                         ) : null}
                         {pickerError ? (
                           <Text style={styles.pickerError}>{pickerError}</Text>
@@ -296,21 +295,19 @@ export function SettingsModal({
                                   {child.name}
                                 </Text>
                                 <View style={styles.pickerRowActions}>
-                                  <TouchableOpacity
-                                    style={styles.pickerRowBtn}
+                                  <AppButton
+                                    label="Open"
+                                    variant="secondary"
+                                    size="sm"
                                     onPress={() => handleOpenFolder(child)}
-                                    activeOpacity={0.8}
-                                  >
-                                    <Text style={styles.pickerRowBtnText}>Open</Text>
-                                  </TouchableOpacity>
-                                  <TouchableOpacity
-                                    style={[styles.pickerRowBtn, styles.pickerRowBtnPrimary]}
+                                  />
+                                  <AppButton
+                                    label="Select"
+                                    variant="primary"
+                                    size="sm"
                                     onPress={() => handleSelectWorkspace(child.path)}
                                     disabled={pickerLoading}
-                                    activeOpacity={0.8}
-                                  >
-                                    <Text style={styles.pickerRowBtnTextPrimary}>Select</Text>
-                                  </TouchableOpacity>
+                                  />
                                 </View>
                               </View>
                             ))}
@@ -339,10 +336,41 @@ export function SettingsModal({
                 ))}
               </View>
 
-              {/* 5. Theme */}
+              {/* 5. Color Mode */}
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Theme</Text>
-                <Text style={styles.themeNote}>Follow Agent (theme follows Code Agent selection)</Text>
+                <Text style={styles.sectionTitle}>Color Mode</Text>
+                <View style={styles.row}>
+                  {[
+                    { value: "system", label: "System" },
+                    { value: "light", label: "Light" },
+                    { value: "dark", label: "Dark" },
+                  ].map((opt) => (
+                    <TouchableOpacity
+                      key={opt.value}
+                      style={[
+                        styles.colorModeOption,
+                        colorMode === opt.value && styles.colorModeOptionActive,
+                      ]}
+                      onPress={() => onColorModeChange(opt.value as any)}
+                      activeOpacity={0.8}
+                    >
+                      <Text
+                        style={[
+                          styles.colorModeOptionText,
+                          colorMode === opt.value && styles.colorModeOptionTextActive,
+                        ]}
+                      >
+                        {opt.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
+              {/* 6. Brand Theme */}
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Brand Theme</Text>
+                <Text style={styles.themeNote}>Theme follows Code Agent selection ({provider})</Text>
               </View>
             </ScrollView>
         </SafeAreaView>
@@ -626,6 +654,26 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
     themeNote: {
       fontSize: 14,
       color: theme.textMuted,
+    },
+    colorModeOption: {
+      paddingVertical: 10,
+      paddingHorizontal: 16,
+      borderRadius: 10,
+      backgroundColor: theme.cardBg,
+      borderWidth: 1,
+      borderColor: theme.borderColor,
+    },
+    colorModeOptionActive: {
+      backgroundColor: theme.accentLight,
+      borderColor: theme.accent,
+    },
+    colorModeOptionText: {
+      fontSize: 14,
+      color: theme.textPrimary,
+    },
+    colorModeOptionTextActive: {
+      color: theme.accent,
+      fontWeight: "600",
     },
   });
 }

@@ -31,6 +31,11 @@ Thumbs.db
 *.swo
 *~
 
+# Tool / agent folders (ignore all folders starting with .)
+.*/
+!.github/
+!.vscode/
+
 # Optional
 .cache/
 coverage/

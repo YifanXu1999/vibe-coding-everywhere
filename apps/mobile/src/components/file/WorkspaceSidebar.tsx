@@ -10,9 +10,13 @@ import {
   ActivityIndicator,
   useWindowDimensions,
 } from "react-native";
-import { Image } from "expo-image";
 import { useTheme } from "../../theme/index";
 import { getDefaultServerConfig } from "../../core";
+import {
+  FolderIcon,
+  FolderOpenIcon,
+  FileIconByType,
+} from "../icons/WorkspaceTreeIcons";
 
 export type TreeItem = {
   name: string;
@@ -28,13 +32,7 @@ type WorkspaceData = {
 
 const DEFAULT_REFRESH_MS = 3000;
 
-// Atom-style icons (PNG converted from Octicons + file-icons SVG)
-const ICONS = {
-  folder: require("../../../assets/icons/folder.png"),
-  folderOpen: require("../../../assets/icons/folder-open.png"),
-  file: require("../../../assets/icons/file.png"),
-};
-
+// Colors by file type (Atom One Light–style)
 const ATOM_ONE_LIGHT = {
   folder: "#C18401",
   blue: "#4078F2",
@@ -165,11 +163,11 @@ export function WorkspaceSidebar({ visible, embedded, onClose, onFileSelect }: W
             >
               <Text style={styles.treeIcon}>{isExpanded ? "▼" : "▶"}</Text>
               <View style={styles.treeIconWrap}>
-                <Image
-                  source={ICONS.folder}
-                  style={[styles.treeIconImage, { tintColor: ATOM_ONE_LIGHT.folder }]}
-                  contentFit="contain"
-                />
+                {isExpanded ? (
+                  <FolderOpenIcon color={ATOM_ONE_LIGHT.folder} />
+                ) : (
+                  <FolderIcon color={ATOM_ONE_LIGHT.folder} />
+                )}
               </View>
               <Text style={styles.treeLabel} numberOfLines={1}>
                 {item.name}
@@ -196,11 +194,7 @@ export function WorkspaceSidebar({ visible, embedded, onClose, onFileSelect }: W
         >
           <View style={styles.treeIconChevron} />
           <View style={styles.treeIconWrap}>
-            <Image
-              source={ICONS.file}
-              style={[styles.treeIconImage, { tintColor: fileColor }]}
-              contentFit="contain"
-            />
+            <FileIconByType name={item.name} color={fileColor} />
           </View>
           <Text style={styles.treeLabel} numberOfLines={1}>
             {item.name}
@@ -393,10 +387,6 @@ function createWorkspaceSidebarStyles(theme: ReturnType<typeof useTheme>) {
     alignItems: "center",
     justifyContent: "center",
     marginRight: 6,
-  },
-  treeIconImage: {
-    width: 20,
-    height: 20,
   },
   treeLabel: {
     flex: 1,
