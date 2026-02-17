@@ -5,7 +5,7 @@ import { useTheme } from "../../theme/index";
 import type { Message } from "../../services/socket/hooks";
 import { stripTrailingIncompleteTag } from "../../services/providers/stream";
 import { PlayIcon } from "../icons/ChatActionIcons";
-import { GeminiIcon, ClaudeIcon } from "../icons/ProviderIcons";
+import { GeminiIcon, ClaudeIcon, CodexIcon } from "../icons/ProviderIcons";
 
 function getFileName(path: string): string {
   const parts = path.replace(/\/$/, "").split(/[/\\]/);
@@ -83,8 +83,8 @@ interface MessageBubbleProps {
   showAsTailBox?: boolean;
   /** Max height for the tail box (e.g. half screen). Only used when showAsTailBox is true. */
   tailBoxMaxHeight?: number;
-  /** AI provider for assistant messages; shows Gemini or Claude icon when set. */
-  provider?: "claude" | "gemini";
+  /** AI provider for assistant messages; shows Gemini, Claude, or Codex icon when set. */
+  provider?: "claude" | "gemini" | "codex";
   /** When provided, bash code blocks are tappable; user can choose to run the command in a new terminal. */
   onRunBashCommand?: (command: string) => void;
   /** When provided, links (including bare URLs) open in the app's internal browser instead of external. */
@@ -96,9 +96,10 @@ interface MessageBubbleProps {
 export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailBoxMaxHeight = 360, provider, onRunBashCommand, onOpenUrl, onFileSelect }: MessageBubbleProps) {
   const theme = useTheme();
   const useWarmTone = provider === "claude";
-  const codeBlockBg = useWarmTone ? "#f0ebe4" : theme.surfaceBg;
-  const quoteBg = useWarmTone ? "#f5f0ea" : theme.cardBg;
-  const bashHeaderBg = useWarmTone ? "#e8e2da" : theme.surfaceBg;
+  const useCodexTone = provider === "codex";
+  const codeBlockBg = useWarmTone ? "#f0ebe4" : useCodexTone ? "#d1fae5" : theme.surfaceBg;
+  const quoteBg = useWarmTone ? "#f5f0ea" : useCodexTone ? "#ecfdf5" : theme.cardBg;
+  const bashHeaderBg = useWarmTone ? "#e8e2da" : useCodexTone ? "#a7f3d0" : theme.surfaceBg;
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
   const refs = message.codeReferences ?? [];
@@ -333,7 +334,8 @@ export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailB
   );
 
   const showProviderIcon = !isUser && !isSystem && provider;
-  const ProviderIcon = provider === "claude" ? ClaudeIcon : GeminiIcon;
+  const ProviderIcon =
+    provider === "claude" ? ClaudeIcon : provider === "codex" ? CodexIcon : GeminiIcon;
 
   return (
     <View style={[styles.row, isUser && styles.rowUser]}>

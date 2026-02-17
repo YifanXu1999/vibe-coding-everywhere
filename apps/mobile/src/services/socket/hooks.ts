@@ -12,7 +12,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { io, Socket } from "socket.io-client";
 import {
-  extractRenderCommandAndUrl,
   filterBashNoise,
   stripAnsi,
   stripTrailingIncompleteTag,
@@ -24,7 +23,6 @@ import {
 import type {
   Message,
   CodeReference,
-  PendingRender,
   PermissionDenial,
   PendingAskUserQuestion,
   LastRunOptions,
@@ -37,7 +35,7 @@ import type { Provider } from "../../theme/index";
 import type { CodeRefPayload } from "../../components/file/FileViewerModal";
 
 // Re-export types for consumers that import from useSocket
-export type { Message, CodeReference, PendingRender, PermissionDenial, PendingAskUserQuestion, LastRunOptions, TerminalState };
+export type { Message, CodeReference, PermissionDenial, PendingAskUserQuestion, LastRunOptions, TerminalState };
 
 /**
  * Normalize file path to use forward slashes.
@@ -77,7 +75,8 @@ export function useSocket(options: UseSocketOptions = {}) {
   const serverConfig = options.serverConfig ?? getDefaultServerConfig();
   const serverUrl = serverConfig.getBaseUrl();
   const provider = options.provider ?? "gemini";
-  const defaultModel = provider === "claude" ? "sonnet" : "gemini-2.5-flash";
+  const defaultModel =
+    provider === "claude" ? "sonnet" : provider === "codex" ? "gpt-5-codex" : "gemini-2.5-flash";
   const model = options.model ?? defaultModel;
 
   // ===== Connection State =====
@@ -100,12 +99,6 @@ export function useSocket(options: UseSocketOptions = {}) {
     useContinue: false,
   });
   
-  // ===== Render/Preview State =====
-  /** When set, shows the command/URL box. Execution only on explicit user click. */
-  const [pendingRender, setPendingRender] = useState<PendingRender | null>(null);
-  const [hasRunCommandForCurrentRender, setHasRunCommandForCurrentRender] = useState(false);
-  const [renderTerminalId, setRenderTerminalId] = useState<string | null>(null);
-  
   // ===== Question Modal State =====
   const [pendingAskQuestion, setPendingAskQuestion] = useState<PendingAskUserQuestion | null>(null);
   
@@ -115,7 +108,6 @@ export function useSocket(options: UseSocketOptions = {}) {
   const [runOutputLines, setRunOutputLines] = useState<{ type: "stdout" | "stderr"; text: string }[]>([]);
   const [runCommand, setRunCommand] = useState<string | null>(null);
   const [runProcessActive, setRunProcessActive] = useState(false);
-  const [runRenderResult, setRunRenderResult] = useState<{ ok: boolean; message: string } | null>(null);
   
   // ===== Model Info =====
   const [modelName, setModelName] = useState("Sonnet 4.5");
@@ -134,8 +126,6 @@ export function useSocket(options: UseSocketOptions = {}) {
   const workspaceRootRef = useRef<string | null>(null);
   const pendingRunCommandRef = useRef<string | null>(null);
   const pendingCommandAfterNewTerminalRef = useRef<string | null>(null);
-  const pendingRenderKeyRef = useRef<string>("");
-  const renderTerminalIdRef = useRef<string | null>(null);
   const toolUseByIdRef = useRef<Map<string, { tool_name: string; tool_input?: Record<string, unknown> }>>(new Map());
 
   /**
@@ -164,14 +154,10 @@ export function useSocket(options: UseSocketOptions = {}) {
       if (last?.role === "assistant") {
         const next = last.content + sanitized;
         currentAssistantContentRef.current = next;
-        const nextRender = extractRenderCommandAndUrl(next);
-        if (nextRender) setPendingRender(nextRender);
         return [...prev.slice(0, -1), { ...last, content: next }];
       }
       const newMsg: Message = { id: `msg-${++nextIdRef.current}`, role: "assistant", content: sanitized };
       currentAssistantContentRef.current = sanitized;
-      const nextRender = extractRenderCommandAndUrl(sanitized);
-      if (nextRender) setPendingRender(nextRender);
       return [...prev, newMsg];
     });
     setTypingIndicator(true);
@@ -184,8 +170,6 @@ export function useSocket(options: UseSocketOptions = {}) {
   const finalizeAssistantMessage = useCallback(() => {
     setTypingIndicator(false);
     const raw = currentAssistantContentRef.current;
-    const next = extractRenderCommandAndUrl(raw);
-    setPendingRender(next);
     const cleaned = stripTrailingIncompleteTag(raw ?? "");
     if (cleaned !== (raw ?? "")) {
       setMessages((prev) => {
@@ -311,7 +295,6 @@ export function useSocket(options: UseSocketOptions = {}) {
             // Handle AI stream events via dispatcher (Claude/Gemini)
             const dispatcher = createEventDispatcher({
               setPermissionDenials: (d) => setPermissionDenials(d ? deduplicateDenials(d) : null),
-              setPendingRender,
               setModelName,
               setWaitingForUserInput,
               setPendingAskQuestion,
@@ -338,7 +321,6 @@ export function useSocket(options: UseSocketOptions = {}) {
               if (isProviderStream(parsed)) {
                 const dispatcher = createEventDispatcher({
                   setPermissionDenials: (d) => setPermissionDenials(d ? deduplicateDenials(d) : null),
-                  setPendingRender,
                   setModelName,
                   setWaitingForUserInput,
                   setPendingAskQuestion,
@@ -433,13 +415,8 @@ export function useSocket(options: UseSocketOptions = {}) {
       setRunProcessActive(false);
     });
 
-    socket.on("run-render-result", (result: { ok: boolean; message?: string; terminalId?: string }) => {
-      setRunRenderResult({ ok: result.ok, message: result.message ?? (result.ok ? "Command executed" : "Command failed") });
-      if (result.ok && result.terminalId) {
-        setRenderTerminalId(result.terminalId);
-        renderTerminalIdRef.current = result.terminalId;
-        setHasRunCommandForCurrentRender(true);
-      }
+    socket.on("run-render-result", () => {
+      // Result acknowledged; terminal list is updated via run-render-started/stdout/exit
     });
 
     // Cleanup on unmount
@@ -451,17 +428,25 @@ export function useSocket(options: UseSocketOptions = {}) {
   // ===== Action Handlers =====
 
   /**
-   * Submit a prompt to Claude/Gemini.
+   * Submit a prompt to Claude/Gemini/Codex.
    * @param prompt - The user prompt
    * @param permissionMode - Optional Claude permission mode
    * @param allowedTools - Optional allowed tools list
    * @param codeRefs - Optional code references to include
    * @param approvalMode - Optional Gemini approval mode
+   * @param codexOptions - Optional Codex flags (askForApproval, fullAuto, yolo)
    */
   const submitPrompt = useCallback(
-    (prompt: string, permissionMode?: string, allowedTools?: string[], codeRefs?: CodeRefPayload[], approvalMode?: string) => {
+    (
+      prompt: string,
+      permissionMode?: string,
+      allowedTools?: string[],
+      codeRefs?: CodeRefPayload[],
+      approvalMode?: string,
+      codexOptions?: { askForApproval?: string; fullAuto?: boolean; yolo?: boolean }
+    ) => {
       if (!socketRef.current) return;
-      
+
       // Build full prompt with code references if provided
       let fullPrompt = prompt;
       if (codeRefs && codeRefs.length > 0) {
@@ -470,7 +455,7 @@ export function useSocket(options: UseSocketOptions = {}) {
           .join("\n\n");
         fullPrompt = `${refsText}\n\n${prompt}`;
       }
-      
+
       socketRef.current.emit("submit-prompt", {
         prompt: fullPrompt,
         permissionMode,
@@ -478,15 +463,16 @@ export function useSocket(options: UseSocketOptions = {}) {
         provider,
         model,
         approvalMode,
+        ...(codexOptions && {
+          askForApproval: codexOptions.askForApproval,
+          fullAuto: codexOptions.fullAuto,
+          yolo: codexOptions.yolo,
+        }),
       });
-      
+
       // Add user message to chat
       addMessage("user", prompt);
       setPermissionDenials(null);
-      setPendingRender(null);
-      setHasRunCommandForCurrentRender(false);
-      setRenderTerminalId(null);
-      renderTerminalIdRef.current = null;
       setLastSessionTerminated(false);
     },
     [addMessage, provider, model]
@@ -620,11 +606,7 @@ export function useSocket(options: UseSocketOptions = {}) {
     setSessionId(null);
     setPermissionDenials(null);
     setLastRunOptions({ permissionMode: null, allowedTools: [], useContinue: false });
-    setPendingRender(null);
     setPendingAskQuestion(null);
-    setHasRunCommandForCurrentRender(false);
-    setRenderTerminalId(null);
-    renderTerminalIdRef.current = null;
     setLastSessionTerminated(false);
     currentAssistantContentRef.current = "";
   }, []);
@@ -647,12 +629,6 @@ export function useSocket(options: UseSocketOptions = {}) {
     // Permission state
     permissionDenials,
     lastRunOptions,
-    
-    // Render state
-    pendingRender,
-    runRenderResult,
-    hasRunCommandForCurrentRender,
-    renderTerminalId,
     
     // Question modal state
     pendingAskQuestion,

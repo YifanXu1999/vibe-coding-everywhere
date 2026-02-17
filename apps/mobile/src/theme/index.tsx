@@ -34,7 +34,14 @@ export const geminiTheme = {
   accentOnDark: "#8ab4f8",
 } as const;
 
-export const themes = { claude: claudeTheme, gemini: geminiTheme } as const;
+export const codexTheme = {
+  accent: "#19c37d",
+  accentSoft: "#d1fae5",
+  accentMuted: "#a7f3d0",
+  accentOnDark: "#6ee7b7",
+} as const;
+
+export const themes = { claude: claudeTheme, gemini: geminiTheme, codex: codexTheme } as const;
 export type Provider = keyof typeof themes;
 export type ColorMode = "light" | "dark";
 export type ColorModePreference = "system" | ColorMode;
@@ -241,7 +248,7 @@ function getNeutrals(mode: ColorMode, provider: Provider) {
     };
   }
   return {
-    background: provider === "gemini" ? "#ffffff" : "#f8f7f5",
+    background: provider === "gemini" || provider === "codex" ? "#ffffff" : "#f8f7f5",
     surface: "#ffffff",
     surfaceAlt: "#f1f2f6",
     surfaceMuted: "#e7e9ef",
@@ -384,7 +391,7 @@ export function useProvider(): Provider {
     const ctx = React.useContext(ThemeContext);
     if (ctx != null && typeof ctx === "object" && "provider" in ctx) {
       const p = (ctx as { provider: Provider }).provider;
-      if (p === "claude" || p === "gemini") return p;
+      if (p === "claude" || p === "gemini" || p === "codex") return p;
     }
   } catch (_) {
     // Fall through to default

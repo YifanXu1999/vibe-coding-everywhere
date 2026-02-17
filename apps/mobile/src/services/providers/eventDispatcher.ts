@@ -10,6 +10,7 @@ import { formatToolUseForDisplay } from "./types";
 import { isAskUserQuestionPayload } from "./stream";
 import { registerClaudeHandlers } from "./claude/eventHandlers";
 import { registerGeminiHandlers } from "./gemini/eventHandlers";
+import { registerCodexHandlers } from "./codex/eventHandlers";
 
 function normalizeAskUserQuestionPayload(data: Record<string, unknown>): PendingAskUserQuestion | null {
   const toolUseId = String(data.tool_use_id ?? "");
@@ -63,6 +64,7 @@ function createHandlerRegistry(ctx: EventContext): Map<string, EventHandler> {
   // Register provider-specific handlers
   registerClaudeHandlers(registry, ctx);
   registerGeminiHandlers(registry, ctx);
+  registerCodexHandlers(registry, ctx);
 
   // Shared handlers used by both providers
   const inputLikeHandler: EventHandler = (data) => {
@@ -136,7 +138,6 @@ export function createEventDispatcher(ctx: EventContext): (data: Record<string, 
       const deduped = ctx.deduplicateDenials(list);
       const { filteredDenials, askUserQuestionPayload } = processPermissionDenials(deduped, data);
       ctx.setPermissionDenials(filteredDenials.length > 0 ? filteredDenials : null);
-      ctx.setPendingRender(null);
       if (askUserQuestionPayload) {
         const pending = normalizeAskUserQuestionPayload(askUserQuestionPayload);
         if (pending) {

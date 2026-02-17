@@ -5,7 +5,7 @@
 ## 概览
 
 - 客户端通过 Socket.IO 的 `submit-prompt` 事件发送 `prompt` 和可选选项。
-- 服务端根据 `provider`（`claude` 或 `gemini`）选择对应配置，调用 `buildArgs(prompt, options)` 生成 CLI 参数，再通过 `pty.spawn(binary, args, ...)` 启动进程。
+- 服务端根据 `provider`（`claude`、`gemini` 或 `codex`）选择对应配置，调用 `buildArgs(prompt, options)` 生成 CLI 参数，再通过 `pty.spawn(binary, args, ...)` 启动进程。
 - 工作目录固定为服务端配置的 `WORKSPACE_CWD`。
 
 ---
@@ -140,6 +140,55 @@ gemini --output-format stream-json --approval-mode auto_edit -p "Refactor this f
 
 ---
 
+## Codex CLI
+
+**二进制名：** `codex`  
+**配置模块：** `server/process/codex.js`
+
+使用非交互模式 `codex exec --json`，输出 JSONL 事件流。续聊优先使用首轮返回的 `thread_id` 作为 session id。
+
+### 首次运行
+
+| 参数 | 说明 |
+|------|------|
+| `exec` | 非交互执行 |
+| `--json` | 输出 JSONL 事件（便于解析） |
+| `-p <prompt>` 或末尾 prompt | 用户提示词（必填） |
+
+可选：`--model`、`--ask-for-approval`、`--full-auto`、`--yolo`、`--skip-git-repo-check`。
+
+### 续写（Resume）
+
+| 条件 | 命令形式 | 说明 |
+|------|----------|------|
+| `opts.useContinue === true` 且 `opts.sessionId` 存在 | `codex exec resume <session_id> --json ... <prompt>` | 使用首轮 `thread.started` 事件中的 `thread_id` 作为 session id 续聊。 |
+| `opts.useContinue === true` 且无 sessionId | `codex exec resume --last --json ... <prompt>` | 防御性回退，恢复“最近一次”会话。 |
+
+**Session ID 来源：** 服务端在 PTY 输出中解析 `{"type":"thread.started","thread_id":"..."}`，将 `thread_id` 写入 `session_management.session_id`，后续续写时传入。
+
+### 审批/权限映射（客户端 → Codex）
+
+| 客户端 UI | Codex 参数 |
+|------------|------------|
+| YOLO | `--yolo` 或 `--dangerously-bypass-approvals-and-sandbox` |
+| Always ask | `--ask-for-approval untrusted` |
+| Ask once per session | `--ask-for-approval on-request` |
+
+### Codex 命令示例
+
+```bash
+# 首次对话
+codex exec --json -p "Summarize this repo"
+
+# 续写（使用已保存的 thread_id）
+codex exec resume 0199a213-81c0-7800-8aa1-bbab2a035a53 --json -p "Now add tests"
+
+# 无 session id 时回退
+codex exec resume --last --json -p "Continue"
+```
+
+---
+
 ## 客户端 payload → 服务端 options → CLI 参数 对应关系
 
 ### submit-prompt 的 payload 字段（客户端）
@@ -147,11 +196,14 @@ gemini --output-format stream-json --approval-mode auto_edit -p "Refactor this f
 | 字段 | 类型 | 适用 Provider | 说明 |
 |------|------|----------------|------|
 | `prompt` | string | 两者 | 用户输入，必填（续写时可为空字符串） |
-| `provider` | `"claude" \| "gemini"` | 两者 | 不传则用服务端 `DEFAULT_PROVIDER` |
+| `provider` | `"claude" \| "gemini" \| "codex"` | 三者 | 不传则用服务端 `DEFAULT_PROVIDER` |
 | `permissionMode` | string | Claude | 传给 Claude 的 `--permission-mode` |
 | `allowedTools` | string[] | Claude | 传给 Claude 的 `--allowedTools` |
 | `approvalMode` | string | Gemini | 传给 Gemini 的 `--approval-mode` |
-| `replaceRunning` | boolean | 两者 | 为 true 时先结束当前会话再起新进程 |
+| `askForApproval` | string | Codex | 传给 Codex 的 `--ask-for-approval` |
+| `fullAuto` | boolean | Codex | 传给 Codex 的 `--full-auto` |
+| `yolo` | boolean | Codex | 传给 Codex 的 `--yolo` |
+| `replaceRunning` | boolean | 三者 | 为 true 时先结束当前会话再起新进程 |
 
 ### 服务端 options 的构造（process/index.js）
 
@@ -159,6 +211,8 @@ gemini --output-format stream-json --approval-mode auto_edit -p "Refactor this f
   `permissionMode`、`allowedTools`、`useContinue`、`systemPrompt`（来自 `getChatSystemPrompt()`）。
 - **Gemini：**  
   `approvalMode`、`useContinue`（续写时加 `--resume`）；无 `permissionMode` / `allowedTools` / `systemPrompt`。
+- **Codex：**  
+  `useContinue`、`sessionId`（来自首轮 JSONL 的 `thread.started.thread_id`）；续写时 `codex exec resume <session_id> --json`，无 sessionId 时回退 `resume --last`。可选 `askForApproval`、`fullAuto`、`yolo`、`model`、`skipGitRepoCheck`。
 
 ### 环境变量与默认值（server/config/index.js）
 
@@ -172,11 +226,11 @@ gemini --output-format stream-json --approval-mode auto_edit -p "Refactor this f
 
 ## 典型使用场景小结
 
-| 场景 | Claude | Gemini |
-|------|--------|--------|
-| 首次发送一条 prompt | `-p "..."` + 可选 `--permission-mode`、`--allowedTools`、`--system-prompt` | `-p "..."` + 可选 `--approval-mode` |
-| 同会话内再次发送（续写） | 加上 `-c`，其余同上 | 先结束当前进程，再以 `--resume` + `-p "..."` 启动新进程，可选 `--approval-mode` |
-| 权限被拒后重试 | 使用新的 `permissionMode` 和/或 `allowedTools` 再次 `submit-prompt`（可 `replaceRunning: true`） | 不涉及 permission/allowedTools |
-| 更换 workspace 或系统提示 | 仅 Claude：重启会话后 `getChatSystemPrompt()` 会重新读取 `prompts/`，从而更新 `--system-prompt` | 不涉及系统提示 |
+| 场景 | Claude | Gemini | Codex |
+|------|--------|--------|--------|
+| 首次发送一条 prompt | `-p "..."` + 可选 `--permission-mode`、`--allowedTools`、`--system-prompt` | `-p "..."` + 可选 `--approval-mode` | `codex exec --json ... -p "..."`，可选 `--model`、`--ask-for-approval`、`--full-auto`、`--yolo` |
+| 同会话内再次发送（续写） | 加上 `-c`，其余同上 | 先结束当前进程，再以 `--resume` + `-p "..."` 启动新进程 | 先结束当前进程，再以 `codex exec resume <thread_id> --json ... -p "..."` 启动；无 thread_id 时用 `resume --last` |
+| 权限/审批 | 使用新的 `permissionMode` / `allowedTools` 重试 | 不涉及 permission/allowedTools | 使用 `askForApproval` / `fullAuto` / `yolo` |
+| 更换 workspace 或系统提示 | 仅 Claude：重启会话后更新 `--system-prompt` | 不涉及系统提示 | 不涉及系统提示 |
 
-以上即本项目中 Claude 与 Gemini 命令的输入方式、flags/options 与不同场景的对应关系。
+以上即本项目中 Claude、Gemini 与 Codex 命令的输入方式、flags/options 与不同场景的对应关系。

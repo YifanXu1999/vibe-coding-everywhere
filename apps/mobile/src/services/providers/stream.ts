@@ -144,6 +144,80 @@ export function isGeminiStreamOutput(data: unknown): data is GeminiStreamOutput 
   return typeof t === "string" && GEMINI_STREAM_TYPES.includes(t);
 }
 
+// ---------------------------------------------------------------------------
+// Codex stream format (codex exec --json JSONL)
+// ---------------------------------------------------------------------------
+
+/** Codex thread started (thread_id is session id for resume). */
+export interface CodexThreadStartedEvent {
+  type: "thread.started";
+  thread_id?: string;
+}
+
+/** Codex turn lifecycle. */
+export interface CodexTurnStartedEvent {
+  type: "turn.started";
+}
+export interface CodexTurnCompletedEvent {
+  type: "turn.completed";
+  usage?: { input_tokens?: number; cached_input_tokens?: number; output_tokens?: number };
+}
+export interface CodexTurnFailedEvent {
+  type: "turn.failed";
+  error?: { message?: string };
+}
+
+/** Codex item events (item.started, item.updated, item.completed). */
+export interface CodexItemEvent {
+  type: "item.started" | "item.updated" | "item.completed";
+  item?: {
+    id?: string;
+    type?: string;
+    text?: string;
+    command?: string;
+    aggregated_output?: string;
+    exit_code?: number;
+    status?: string;
+    changes?: Array<{ path?: string; kind?: string }>;
+    server?: string;
+    tool?: string;
+    arguments?: unknown;
+    result?: { content?: string; structured_content?: unknown };
+    error?: string;
+  };
+}
+
+/** Codex top-level error. */
+export interface CodexErrorEvent {
+  type: "error";
+  message?: string;
+}
+
+export type CodexStreamOutput =
+  | CodexThreadStartedEvent
+  | CodexTurnStartedEvent
+  | CodexTurnCompletedEvent
+  | CodexTurnFailedEvent
+  | CodexItemEvent
+  | CodexErrorEvent;
+
+const CODEX_STREAM_TYPES: readonly string[] = [
+  "thread.started",
+  "turn.started",
+  "turn.completed",
+  "turn.failed",
+  "item.started",
+  "item.updated",
+  "item.completed",
+  "error",
+];
+
+export function isCodexStreamOutput(data: unknown): data is CodexStreamOutput {
+  if (typeof data !== "object" || data === null) return false;
+  const t = (data as Record<string, unknown>).type;
+  return typeof t === "string" && CODEX_STREAM_TYPES.includes(t);
+}
+
 export const RENDER_CMD_REGEX = /Run the following command for render:\s*"([^"]+)"/i;
 export const RENDER_URL_REGEX = /URL for preview:\s*"([^"]+)"/i;
 /** Message is "not verified" (need permission) — do not show verified-style run bar. */
@@ -240,15 +314,16 @@ export function isAskUserQuestionPayload(data: unknown): boolean {
 }
 
 /** Union of all provider stream output types (for typing dispatcher input). */
-export type ProviderStreamOutput = ClaudeStreamOutput | GeminiStreamOutput;
+export type ProviderStreamOutput = ClaudeStreamOutput | GeminiStreamOutput | CodexStreamOutput;
 
-/** Check if data matches known AI stream event format (works for both Claude and Gemini). */
+/** Check if data matches known AI stream event format (works for Claude, Gemini, and Codex). */
 export function isProviderStream(data: unknown): data is ProviderStreamOutput | (Record<string, unknown> & { permission_denials: unknown[] }) {
   if (typeof data !== "object" || data === null) return false;
   const obj = data as Record<string, unknown>;
   return (
     isClaudeStreamOutput(obj) ||
     isGeminiStreamOutput(obj) ||
+    isCodexStreamOutput(obj) ||
     Array.isArray(obj.permission_denials) ||
     isAskUserQuestionPayload(obj)
   );

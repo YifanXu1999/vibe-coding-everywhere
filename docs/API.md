@@ -113,21 +113,26 @@ Serves a file raw for preview (HTML, CSS, JS).
 
 #### `submit-prompt`
 
-Start a new AI session (Claude or Gemini) with a prompt.
+Start a new AI session (Claude, Gemini, or Codex) with a prompt.
 
 **Payload:**
 
 ```typescript
 {
   prompt: string;           // The prompt to send
-  provider?: "claude" | "gemini";  // Optional: default from DEFAULT_PROVIDER
-  model?: string;          // Optional: Claude (haiku, sonnet, opus) or Gemini (e.g. gemini-2.5-flash); default by provider
+  provider?: "claude" | "gemini" | "codex";  // Optional: default from DEFAULT_PROVIDER
+  model?: string;          // Optional: Claude (haiku, sonnet, opus), Gemini (e.g. gemini-2.5-flash), or Codex (e.g. gpt-5-codex); default by provider
   permissionMode?: string;  // Optional: Claude permission mode (default from env)
   allowedTools?: string[];  // Optional: allowed tool patterns (Claude)
   approvalMode?: string;    // Optional: Gemini approval mode (default, auto_edit, plan)
+  askForApproval?: string;  // Optional: Codex --ask-for-approval (e.g. untrusted, on-request)
+  fullAuto?: boolean;      // Optional: Codex --full-auto
+  yolo?: boolean;          // Optional: Codex --yolo
   replaceRunning?: boolean; // Optional: kill existing session first
 }
 ```
+
+**Codex continuation:** For subsequent turns in the same session, the server uses the `thread_id` from the first turn’s `thread.started` JSONL event. If no session id is available, it falls back to `codex exec resume --last`.
 
 **Example:**
 

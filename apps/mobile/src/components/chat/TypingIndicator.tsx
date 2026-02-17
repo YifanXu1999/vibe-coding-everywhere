@@ -2,12 +2,12 @@ import React, { useEffect, useRef, useMemo } from "react";
 import { View, StyleSheet, Animated } from "react-native";
 import Svg, { Path } from "react-native-svg";
 import { useTheme } from "../../theme/index";
-import { GeminiIcon, ClaudeIcon } from "../icons/ProviderIcons";
+import { GeminiIcon, ClaudeIcon, CodexIcon } from "../icons/ProviderIcons";
 
 interface TypingIndicatorProps {
   visible: boolean;
   /** AI provider; loading is a circular line segment running around the icon. */
-  provider?: "claude" | "gemini";
+  provider?: "claude" | "gemini" | "codex";
 }
 
 const ICON_SIZE = 24;
@@ -104,7 +104,7 @@ export function TypingIndicator({ visible, provider = "gemini" }: TypingIndicato
     inputRange: [0, 1],
     outputRange: ["0deg", "360deg"],
   });
-  const Icon = provider === "claude" ? ClaudeIcon : GeminiIcon;
+  const Icon = provider === "claude" ? ClaudeIcon : provider === "codex" ? CodexIcon : GeminiIcon;
   const ringColor = theme.colors.accent;
 
   return (

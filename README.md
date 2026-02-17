@@ -1,6 +1,6 @@
 # Vibe Coding Everywhere
 
-Web and mobile clients that connect to a local AI coding assistant (Claude Code CLI or Gemini CLI) via Socket.IO. The server spawns the selected CLI in a PTY and streams output in real time.
+Web and mobile clients that connect to a local AI coding assistant (Claude Code CLI, Gemini CLI, or Codex) via Socket.IO. The server spawns the selected CLI in a PTY and streams output in real time. Codex uses session-id-based resume: the first turn runs `codex exec --json`, and later turns use `codex exec resume <thread_id> --json` (with a fallback to `resume --last` when no thread id is available).
 
 ## Table of Contents
 
@@ -18,7 +18,7 @@ Web and mobile clients that connect to a local AI coding assistant (Claude Code 
 
 This project provides a web-based and mobile interface for interacting with AI coding assistants. It consists of:
 
-- **Server**: Express + Socket.IO + node-pty that spawns Claude CLI or Gemini CLI
+- **Server**: Express + Socket.IO + node-pty that spawns Claude CLI, Gemini CLI, or Codex
 - **Web Client**: HTML/JS chat UI served at the root URL
 - **Mobile Client**: Expo React Native app for iOS/Android devices
 
@@ -32,6 +32,7 @@ See [Quick Start Guide](docs/QUICKSTART.md) for the fastest setup.
 - At least one AI CLI installed and in PATH:
   - [Claude Code CLI](https://docs.anthropic.com/claude/docs/claude-code)
   - [Gemini CLI](https://github.com/google/gemini-cli) (`npm i -g @google/gemini-cli`)
+  - [Codex](https://github.com/cursor/codex) (for `codex exec --json` and session-id resume)
 - (Optional) [Tailscale](https://tailscale.com) for mobile access
 
 ### Installation
@@ -74,8 +75,9 @@ See [Mobile Setup](#mobile-setup) below.
                                                 │
 ┌─────────────────┐     Socket.IO      ┌───────▼─────────┐
 │  Mobile Client  │ ◄────────────────► │  AI CLI (PTY)   │
-│  (iOS/Android)  │                    │  Claude / Gemini│
-└─────────────────┘                    └─────────────────┘
+│  (iOS/Android)  │                    │ Claude/Gemini/  │
+└─────────────────┘                    │ Codex           │
+                                       └─────────────────┘
 ```
 
 ### Server Structure
@@ -87,9 +89,10 @@ server/
 ├── config/         # Environment configuration
 ├── utils/          # Utility functions (ANSI stripping, workspace tree)
 ├── prompts/        # System prompt loading (Claude)
-├── process/        # AI provider PTY management (Claude/Gemini)
+├── process/        # AI provider PTY management (Claude/Gemini/Codex)
 │   ├── claude.js   # Claude CLI config
-│   └── gemini.js   # Gemini CLI config
+│   ├── gemini.js   # Gemini CLI config
+│   └── codex.js    # Codex CLI config (exec --json, resume by thread_id)
 ├── routes/         # Express API routes
 └── socket/         # Socket.IO event handlers
 ```
@@ -110,7 +113,7 @@ apps/mobile/src/
 │   ├── socket/     # Socket connection hook
 │   ├── server/     # Server configuration
 │   ├── file/       # File operations
-│   └── providers/  # AI provider event handling (Claude, Gemini)
+│   └── providers/  # AI provider event handling (Claude, Gemini, Codex)
 └── theme/          # Styling constants
 ```
 
@@ -130,7 +133,7 @@ apps/mobile/src/
 |----------|-------------|---------|
 | `PORT` | Server port | `3456` |
 | `WORKSPACE` / `WORKSPACE_CWD` | AI CLI working directory | Server directory |
-| `DEFAULT_PROVIDER` | AI provider: `claude` or `gemini` | `gemini` |
+| `DEFAULT_PROVIDER` | AI provider: `claude`, `gemini`, or `codex` | `gemini` |
 | `DEFAULT_PERMISSION_MODE` | Claude permission mode | `bypassPermissions` |
 | `DEFAULT_GEMINI_APPROVAL_MODE` | Gemini approval mode: `default`, `auto_edit`, `plan` | `auto_edit` |
 | `SIDEBAR_REFRESH_INTERVAL_MS` | File tree refresh interval | `3000` |
@@ -198,7 +201,7 @@ node server.js --workspace /path/to/project
 
 | Event | Payload | Description |
 |-------|---------|-------------|
-| `submit-prompt` | `{ prompt, provider?, permissionMode?, allowedTools?, approvalMode? }` | Start AI session (Claude or Gemini) |
+| `submit-prompt` | `{ prompt, provider?, permissionMode?, allowedTools?, approvalMode?, askForApproval?, fullAuto?, yolo? }` | Start AI session (Claude, Gemini, or Codex) |
 | `input` | `string` | Send input to Claude |
 | `resize` | `{ cols, rows }` | Resize PTY |
 | `claude-terminate` | — | Kill Claude process |

@@ -12,7 +12,6 @@ export interface ToolUseRecord {
 
 export interface EventContext {
   setPermissionDenials: (denials: PermissionDenial[] | null) => void;
-  setPendingRender: (value: { command: string; url: string } | null) => void;
   setModelName: (name: string) => void;
   setWaitingForUserInput: (value: boolean) => void;
   setPendingAskQuestion: (value: PendingAskUserQuestion | null) => void;

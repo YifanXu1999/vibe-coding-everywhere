@@ -10,6 +10,7 @@ import {
   extractRenderCommandAndUrl,
   filterBashNoise,
   isProviderStream,
+  isCodexStreamOutput,
   RENDER_CMD_REGEX,
   RENDER_URL_REGEX,
 } from "../stream";
@@ -171,9 +172,30 @@ describe("isProviderStream", () => {
     expect(isProviderStream({ type: "tool_use" })).toBe(true);
   });
 
+  it("returns true for Codex event types", () => {
+    expect(isProviderStream({ type: "thread.started", thread_id: "0199a213-81c0-7800-8aa1-bbab2a035a53" })).toBe(true);
+    expect(isProviderStream({ type: "item.completed", item: { type: "agent_message", text: "Done." } })).toBe(true);
+    expect(isProviderStream({ type: "turn.failed", error: { message: "error" } })).toBe(true);
+  });
+
   it("returns false for plain text", () => {
     expect(isProviderStream("hello")).toBe(false);
     expect(isProviderStream({ foo: "bar" })).toBe(false);
+  });
+});
+
+describe("isCodexStreamOutput", () => {
+  it("returns true for thread.started with thread_id", () => {
+    expect(isCodexStreamOutput({ type: "thread.started", thread_id: "0199a213-81c0-7800-8aa1-bbab2a035a53" })).toBe(true);
+  });
+
+  it("returns true for item.completed", () => {
+    expect(isCodexStreamOutput({ type: "item.completed", item: { id: "item_1", type: "agent_message", text: "Hello" } })).toBe(true);
+  });
+
+  it("returns false for Claude/Gemini types", () => {
+    expect(isCodexStreamOutput({ type: "assistant" })).toBe(false);
+    expect(isCodexStreamOutput({ type: "init" })).toBe(false);
   });
 });
 

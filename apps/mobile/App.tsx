@@ -57,7 +57,6 @@ import {
 // Component Imports
 import { MessageBubble, hasFileActivityContent } from "./src/components/chat/MessageBubble";
 import { TypingIndicator } from "./src/components/chat/TypingIndicator";
-import { RenderPreviewBar } from "./src/components/preview/RenderPreviewBar";
 import { PermissionDenialBanner } from "./src/components/common/PermissionDenialBanner";
 import { AskQuestionModal } from "./src/components/chat/AskQuestionModal";
 import { InputPanel } from "./src/components/chat/InputPanel";
@@ -84,8 +83,14 @@ const GEMINI_MODELS: { value: string; label: string }[] = [
   { value: "gemini-2.5-flash-lite", label: "2.5 Flash Lite" },
 ];
 
+const CODEX_MODELS: { value: string; label: string }[] = [
+  { value: "gpt-5-codex", label: "GPT-5 Codex" },
+  { value: "gpt-5.1-codex-max", label: "GPT-5.1 Codex Max" },
+];
+
 const DEFAULT_CLAUDE_MODEL = "sonnet";
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
+const DEFAULT_CODEX_MODEL = "gpt-5-codex";
 
 // Terminal layout constants
 const TERMINAL_CARD_GAP = 12;
@@ -100,7 +105,18 @@ const TERMINAL_CARD_STEP = TERMINAL_CARD_WIDTH + TERMINAL_CARD_GAP;
 function getBackendPermissionMode(
   ui: PermissionModeUI,
   provider: BrandProvider
-): { permissionMode?: string; approvalMode?: string } {
+): {
+  permissionMode?: string;
+  approvalMode?: string;
+  askForApproval?: string;
+  fullAuto?: boolean;
+  yolo?: boolean;
+} {
+  if (provider === "codex") {
+    if (ui === "yolo") return { yolo: true };
+    if (ui === "always_ask") return { askForApproval: "untrusted" };
+    return { askForApproval: "on-request" };
+  }
   if (ui === "yolo") {
     return provider === "claude"
       ? { permissionMode: "bypassPermissions" }
@@ -191,17 +207,18 @@ export default function App() {
   // Theme and Provider State
   const [provider, setProvider] = useState<BrandProvider>("gemini");
   const [model, setModel] = useState(DEFAULT_GEMINI_MODEL);
-  const [colorMode, setColorMode] = useState<"system" | "light" | "dark">("system");
-  
-  const theme = useMemo(() => getTheme(provider), [provider]);
+  const theme = useMemo(() => getTheme(provider, "light"), [provider]);
   const styles = useMemo(() => createAppStyles(theme), [theme]);
 
   // Model Management
-  const modelOptions = provider === "claude" ? CLAUDE_MODELS : GEMINI_MODELS;
-  
+  const modelOptions =
+    provider === "claude" ? CLAUDE_MODELS : provider === "codex" ? CODEX_MODELS : GEMINI_MODELS;
+
   const setProviderAndModel = useCallback((p: BrandProvider) => {
     setProvider(p);
-    setModel(p === "claude" ? DEFAULT_CLAUDE_MODEL : DEFAULT_GEMINI_MODEL);
+    setModel(
+      p === "claude" ? DEFAULT_CLAUDE_MODEL : p === "codex" ? DEFAULT_CODEX_MODEL : DEFAULT_GEMINI_MODEL
+    );
     triggerHaptic("selection");
   }, []);
 
@@ -258,11 +275,7 @@ export default function App() {
     waitingForUserInput,
     typingIndicator,
     sessionId,
-    pendingRender,
     permissionDenials,
-    runRenderResult,
-    hasRunCommandForCurrentRender,
-    renderTerminalId,
     terminals,
     selectedTerminalId,
     setSelectedTerminalId,
@@ -409,12 +422,21 @@ export default function App() {
   const handleSubmit = useCallback(
     (prompt: string) => {
       const backend = getBackendPermissionMode(permissionModeUI, provider);
+      const codexOptions =
+        provider === "codex"
+          ? {
+              askForApproval: backend.askForApproval,
+              fullAuto: backend.fullAuto,
+              yolo: backend.yolo,
+            }
+          : undefined;
       submitPrompt(
         prompt,
         backend.permissionMode,
         undefined,
         pendingCodeRefs.length ? pendingCodeRefs : undefined,
-        backend.approvalMode
+        backend.approvalMode,
+        codexOptions
       );
       if (pendingCodeRefs.length) setPendingCodeRefs([]);
       setSidebarVisible(false);
@@ -478,7 +500,7 @@ export default function App() {
   // ============================================================================
 
   return (
-    <ThemeProvider provider={provider} colorMode={colorMode}>
+    <ThemeProvider provider={provider} colorMode="light">
       <SafeAreaView style={styles.safeArea}>
         <ExpoStatusBar style={theme.mode === "dark" ? "light" : "dark"} />
         <KeyboardAvoidingView
@@ -553,52 +575,6 @@ export default function App() {
                   ListFooterComponent={
                     <>
                       <TypingIndicator visible={typingIndicator} provider={provider} />
-                      
-                      {runRenderResult && (
-                        <View style={styles.runResult}>
-                          <Text
-                            style={[
-                              styles.runResultText,
-                              runRenderResult.ok ? styles.runResultOk : styles.runResultError,
-                            ]}
-                          >
-                            {runRenderResult.message}
-                          </Text>
-                        </View>
-                      )}
-                      
-                      <RenderPreviewBar
-                        pendingRender={pendingRender}
-                        hasRunCommandForCurrentRender={hasRunCommandForCurrentRender}
-                        onRunRender={(command, url) => {
-                          runCommandInNewTerminal(command);
-                          if (url) handleOpenPreviewInApp(url);
-                        }}
-                        onOpenPreviewInApp={handleOpenPreviewInApp}
-                      />
-                      
-                      {pendingRender != null && (
-                        <View style={styles.renderTerminalWrap}>
-                          <RunOutputView
-                            lines={
-                              renderTerminalId
-                                ? terminals.find((t) => t.id === renderTerminalId)?.lines ?? []
-                                : []
-                            }
-                            title="Terminal"
-                            showCommand={false}
-                            showWhenEmpty
-                            onTerminate={
-                              renderTerminalId
-                                ? () => terminateRunProcess(renderTerminalId)
-                                : undefined
-                            }
-                            maxHeight={220}
-                            onOpenUrl={handleOpenPreviewInApp}
-                          />
-                        </View>
-                      )}
-                      
                       {permissionDenials && permissionDenials.length > 0 && (
                         <PermissionDenialBanner
                           denials={permissionDenials}
@@ -671,7 +647,6 @@ export default function App() {
                 provider={provider}
                 model={model}
                 modelOptions={modelOptions}
-                onProviderChange={setProviderAndModel}
                 onModelChange={setModel}
               />
             </View>
@@ -705,8 +680,6 @@ export default function App() {
             workspaceLoading={workspacePathLoading}
             onRefreshWorkspace={fetchWorkspacePath}
             serverBaseUrl={serverConfig.getBaseUrl()}
-            colorMode={colorMode}
-            onColorModeChange={setColorMode}
           />
 
           {/* Preview WebView Modal */}
@@ -1004,23 +977,6 @@ function createAppStyles(theme: ReturnType<typeof getTheme>) {
       paddingVertical: 12,
       gap: 16,
       paddingBottom: 24,
-    },
-    runResult: {
-      paddingVertical: 8,
-      paddingLeft: 48,
-    },
-    runResultText: {
-      fontSize: 14,
-    },
-    runResultOk: {
-      color: theme.colors.success,
-    },
-    runResultError: {
-      color: theme.colors.danger,
-    },
-    renderTerminalWrap: {
-      marginTop: 10,
-      width: "100%",
     },
     fullScreenTerminalSafe: {
       flex: 1,

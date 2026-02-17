@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Random Words</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      min-height: 100vh;
+      background: linear-gradient(135deg, #1a1a2e, #16213e, #0f3460);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      color: #fff;
+      padding: 2rem;
+    }
+
+    h1 {
+      font-size: 2.5rem;
+      margin-bottom: 2rem;
+      letter-spacing: 2px;
+      text-shadow: 0 0 20px rgba(100, 200, 255, 0.5);
+    }
+
+    #words-container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      justify-content: center;
+      max-width: 800px;
+      margin-bottom: 2.5rem;
+      min-height: 120px;
+    }
+
+    .word-chip {
+      padding: 0.5rem 1.2rem;
+      border-radius: 50px;
+      font-size: 1.1rem;
+      font-weight: 600;
+      cursor: default;
+      animation: popIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+      transition: transform 0.2s, box-shadow 0.2s;
+      user-select: none;
+    }
+
+    .word-chip:hover {
+      transform: scale(1.12) rotate(-2deg);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    }
+
+    @keyframes popIn {
+      from { opacity: 0; transform: scale(0.4) rotate(-10deg); }
+      to   { opacity: 1; transform: scale(1) rotate(0deg); }
+    }
+
+    button {
+      padding: 0.75rem 2.5rem;
+      font-size: 1.1rem;
+      font-weight: 700;
+      letter-spacing: 1px;
+      border: none;
+      border-radius: 50px;
+      background: linear-gradient(135deg, #e94560, #0f3460);
+      color: #fff;
+      cursor: pointer;
+      box-shadow: 0 4px 20px rgba(233, 69, 96, 0.4);
+      transition: transform 0.15s, box-shadow 0.15s;
+    }
+
+    button:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 8px 28px rgba(233, 69, 96, 0.6);
+    }
+
+    button:active {
+      transform: translateY(0);
+    }
+  </style>
+</head>
+<body>
+
+  <h1>✨ Random Words</h1>
+  <div id="words-container"></div>
+  <button onclick="generateWords()">Generate New Words</button>
+
+  <script>
+    const WORDS = [
+      "aurora","cascade","nebula","whimsy","labyrinth","solstice","phoenix",
+      "velvet","prism","mosaic","twilight","quartz","ember","serenity","drift",
+      "cipher","havoc","nimble","opal","radiant","zenith","fervent","lullaby",
+      "epoch","gossamer","horizon","jubilee","kaleidoscope","mirage","nomad",
+      "odyssey","paradigm","quasar","reverie","silhouette","tapestry","umbra",
+      "vivid","wander","xanadu","yearning","zephyr","arcane","blossom","chrome",
+      "dusk","eclipse","fable","glow","haze","ignite","jolt","kindred","lore",
+      "mystic","nova","oracle","pulse","quest","ripple","spark","trance","unison",
+      "veil","wisp","echo","flux","gust","halo","iris","jade","karma","lotus",
+      "mist","neon","onyx","petal","quill","rune","sage","tide","ultra","void",
+      "lumen","brisk","mossy","kettle","driftwood","thistle","pocket","caravan",
+      "locus","papaya","glint","shuffle","marble","canyon","sprig","sonnet",
+      "clover","brisket","spindle","chiffon","dune","gasket","mallow","twine",
+      "pistachio","stencil","glimmer"
+    ];
+
+    const COLORS = [
+      ["#ff6b6b","#fff"],["#feca57","#333"],["#48dbfb","#333"],
+      ["#ff9ff3","#333"],["#54a0ff","#fff"],["#5f27cd","#fff"],
+      ["#00d2d3","#fff"],["#ff9f43","#fff"],["#10ac84","#fff"],
+      ["#ee5a24","#fff"],["#0652DD","#fff"],["#9980FA","#fff"],
+      ["#833471","#fff"],["#1289A7","#fff"],["#C4E538","#333"],
+    ];
+
+    function getRandom(arr) {
+      return arr[Math.floor(Math.random() * arr.length)];
+    }
+
+    function generateWords() {
+      const container = document.getElementById('words-container');
+      container.innerHTML = '';
+
+      const count = Math.floor(Math.random() * 6) + 7; // 7–12 words
+      const shuffled = [...WORDS].sort(() => Math.random() - 0.5).slice(0, count);
+
+      shuffled.forEach((word, i) => {
+        const [bg, fg] = getRandom(COLORS);
+        const chip = document.createElement('span');
+        chip.className = 'word-chip';
+        chip.textContent = word;
+        chip.style.background = bg;
+        chip.style.color = fg;
+        chip.style.animationDelay = `${i * 60}ms`;
+        container.appendChild(chip);
+      });
+    }
+
+    // Generate on load
+    generateWords();
+  </script>
+
+</body>
+</html>

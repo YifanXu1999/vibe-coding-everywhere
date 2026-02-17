@@ -14,15 +14,17 @@ import {
   DEFAULT_GEMINI_APPROVAL_MODE,
   DEFAULT_PROVIDER,
 } from "../config/index.js";
-import { stripAnsi } from "../utils/index.js";
+import { killProcessOnPort, stripAnsi } from "../utils/index.js";
 import { getChatSystemPrompt } from "../prompts/index.js";
 
 import { claudeConfig } from "./claude.js";
 import { geminiConfig } from "./gemini.js";
+import { codexConfig } from "./codex.js";
 
 const PROVIDER_CONFIG = {
   claude: claudeConfig,
   gemini: geminiConfig,
+  codex: codexConfig,
 };
 
 /** Track all AI PTY processes so we can kill them when the server exits. */
@@ -104,7 +106,7 @@ function formatSessionLogTimestamp() {
 export function spawnProvider(socket, provider, prompt, options) {
   const config = PROVIDER_CONFIG[provider];
   if (!config) {
-    emitError(socket, `Unknown provider: ${provider}. Use "claude" or "gemini".`);
+    emitError(socket, `Unknown provider: ${provider}. Use "claude", "gemini", or "codex".`);
     return null;
   }
   const args = config.buildArgs(prompt, options);
@@ -151,12 +153,82 @@ export function spawnProvider(socket, provider, prompt, options) {
       console.warn("[ai-log] Failed to create log file:", err.message);
     }
 
+    let codexLineBuffer = "";
+    let providerDebugLineBuffer = "";
+    const backgroundHttpServerPorts = new Set();
     ptyProcess.onData((data) => {
       socket.emit("output", data);
       const text = stripAnsi(data);
       if (text) process.stdout.write(text);
       if (logStream?.writable) logStream.write(data);
       if (ioOutputStream?.writable) ioOutputStream.write(data);
+
+      providerDebugLineBuffer += data;
+      const providerDebugLines = providerDebugLineBuffer.split("\n");
+      providerDebugLineBuffer = providerDebugLines.pop() ?? "";
+      for (const rawLine of providerDebugLines) {
+        const trimmed = rawLine.trim();
+        if (!trimmed) continue;
+        try {
+          const parsed = JSON.parse(trimmed);
+          const content = parsed?.message?.content;
+          if (!Array.isArray(content)) continue;
+          for (const item of content) {
+            if (item?.type !== "tool_use" || item?.name !== "Bash") continue;
+            const toolInput = item?.input && typeof item.input === "object" ? item.input : {};
+            const toolCommand = typeof toolInput.command === "string" ? toolInput.command : "";
+            const runInBackground = toolInput.run_in_background === true;
+            const hasNohup = /\bnohup\b/.test(toolCommand);
+            const hasDisown = /\bdisown\b/.test(toolCommand);
+            const httpServerLineMatches = [...toolCommand.matchAll(/(?:^|\n)\s*python(?:3)?\s+-m\s+http\.server\s+(\d{2,5})([^\n]*)/g)];
+            for (const m of httpServerLineMatches) {
+              const portNum = Number(m[1]);
+              if (!Number.isInteger(portNum) || portNum < 1 || portNum > 65535) continue;
+              const trailingPart = m[2] ?? "";
+              const lineHasBackgroundAmp = /(?:^|[^&])&(?!&)\s*$/.test(trailingPart);
+              const shouldQueueCleanup =
+                runInBackground || lineHasBackgroundAmp || hasNohup || hasDisown;
+              if (!shouldQueueCleanup) continue;
+              backgroundHttpServerPorts.add(portNum);
+            }
+          }
+        } catch (_) {
+          // ignore non-JSON lines
+        }
+      }
+
+      if (provider === "codex" && options.session_management) {
+        codexLineBuffer += data;
+        const lines = codexLineBuffer.split("\n");
+        codexLineBuffer = lines.pop() ?? "";
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try {
+            const parsed = JSON.parse(trimmed);
+            if (parsed?.type === "thread.started" && typeof parsed.thread_id === "string") {
+              options.session_management.session_id = parsed.thread_id;
+              console.log("[codex] thread_id captured:", parsed.thread_id);
+            }
+            const codexErrorMsg =
+              parsed?.type === "error"
+                ? parsed.message
+                : parsed?.type === "turn.failed"
+                  ? parsed.error?.message
+                  : null;
+            if (
+              typeof codexErrorMsg === "string" &&
+              (codexErrorMsg.includes("missing rollout path for thread") ||
+                codexErrorMsg.toLowerCase().includes("state db"))
+            ) {
+              options.session_management.session_id = null;
+              console.log("[codex] cleared session_id after error:", codexErrorMsg.slice(0, 80));
+            }
+          } catch (_) {
+            // ignore malformed JSON lines
+          }
+        }
+      }
     });
 
     socket.emit("claude-started", {
@@ -170,6 +242,11 @@ export function spawnProvider(socket, provider, prompt, options) {
 
     ptyProcess.onExit(({ exitCode }) => {
       globalPtyProcesses.delete(ptyProcess);
+      if (backgroundHttpServerPorts.size > 0) {
+        for (const port of backgroundHttpServerPorts) {
+          killProcessOnPort(port);
+        }
+      }
       if (logStream?.writable) {
         logStream.write(
           `\n--- Session ended (exit ${exitCode}) ${new Date().toISOString()} ---\n`
@@ -231,7 +308,13 @@ export function createProcessManager(socket, { hasCompletedFirstRunRef, session_
       socket.emit("exit", { exitCode: 0 });
     }
     const provider =
-      payload?.provider === "gemini" ? "gemini" : payload?.provider === "claude" ? "claude" : DEFAULT_PROVIDER;
+      payload?.provider === "codex"
+        ? "codex"
+        : payload?.provider === "gemini"
+          ? "gemini"
+          : payload?.provider === "claude"
+            ? "claude"
+            : DEFAULT_PROVIDER;
     console.log("[submit-prompt] chat input (user prompt):", prompt, "provider:", provider);
     const permissionMode =
       typeof payload?.permissionMode === "string" && payload.permissionMode.trim()
@@ -240,7 +323,8 @@ export function createProcessManager(socket, { hasCompletedFirstRunRef, session_
     const allowedTools = Array.isArray(payload?.allowedTools)
       ? payload.allowedTools.filter((t) => typeof t === "string" && t.trim()).map((t) => t.trim())
       : [];
-    const defaultModel = provider === "claude" ? "sonnet" : "gemini-2.5-flash";
+    const defaultModel =
+      provider === "claude" ? "sonnet" : provider === "codex" ? "gpt-5-codex" : "gemini-2.5-flash";
     const model =
       typeof payload?.model === "string" && payload.model.trim()
         ? payload.model.trim()
@@ -267,6 +351,7 @@ export function createProcessManager(socket, { hasCompletedFirstRunRef, session_
 
     const useContinue = hasCompletedFirstRunRef.value;
     // Claude: no session_id before first conversation; assign when establishing first run, then use --resume
+    // Codex: session_id comes from thread.started (thread_id) and is persisted in session_management
     let sessionId = undefined;
     if (provider === "claude" && session_management) {
       if (session_management.session_id) {
@@ -275,6 +360,9 @@ export function createProcessManager(socket, { hasCompletedFirstRunRef, session_
         session_management.session_id = crypto.randomUUID();
         sessionId = session_management.session_id;
       }
+    }
+    if (provider === "codex" && session_management?.session_id) {
+      sessionId = session_management.session_id;
     }
 
     const approvalMode =
@@ -300,6 +388,14 @@ export function createProcessManager(socket, { hasCompletedFirstRunRef, session_
     }
     const conversationSessionId = socket.id ?? "unknown";
 
+    const askForApproval =
+      typeof payload?.askForApproval === "string" && payload.askForApproval.trim()
+        ? payload.askForApproval.trim()
+        : undefined;
+    const fullAuto = payload?.fullAuto === true;
+    const yolo = payload?.yolo === true;
+    const skipGitRepoCheck = payload?.skipGitRepoCheck === true;
+
     const options = {
       model,
       permissionMode: permissionMode || null,
@@ -308,7 +404,12 @@ export function createProcessManager(socket, { hasCompletedFirstRunRef, session_
       sessionId,
       systemPrompt: systemPrompt || undefined,
       approvalMode: provider === "gemini" ? approvalMode : undefined,
+      askForApproval: provider === "codex" ? askForApproval : undefined,
+      fullAuto: provider === "codex" ? fullAuto : undefined,
+      yolo: provider === "codex" ? yolo : undefined,
+      skipGitRepoCheck: provider === "codex" ? skipGitRepoCheck : undefined,
       hasCompletedFirstRunRef,
+      session_management: provider === "codex" ? session_management : undefined,
       sessionLogTimestamp: session_management?.session_log_timestamp ?? undefined,
       conversationSessionId,
       turnId: turnCounter,

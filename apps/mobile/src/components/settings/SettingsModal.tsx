@@ -11,8 +11,8 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { AppButton, AppPressable, AppText } from "../../design-system";
-import { useTheme, type ColorModePreference } from "../../theme/index";
-import { GeminiIcon, ClaudeIcon } from "../icons/ProviderIcons";
+import { useTheme } from "../../theme/index";
+import { GeminiIcon, ClaudeIcon, CodexIcon } from "../icons/ProviderIcons";
 import type { Provider } from "../../theme/index";
 
 export type PermissionModeUI = "always_ask" | "ask_once_per_session" | "yolo";
@@ -45,8 +45,6 @@ export interface SettingsModalProps {
   modelOptions: { value: string; label: string }[];
   permissionMode: PermissionModeUI;
   onPermissionModeChange: (mode: PermissionModeUI) => void;
-  colorMode: ColorModePreference;
-  onColorModeChange: (mode: ColorModePreference) => void;
   onStopSession: () => void;
   onNewSession: () => void;
   claudeRunning: boolean;
@@ -67,8 +65,6 @@ export function SettingsModal({
   modelOptions,
   permissionMode,
   onPermissionModeChange,
-  colorMode,
-  onColorModeChange,
   onStopSession,
   onNewSession,
   claudeRunning,
@@ -272,6 +268,18 @@ export function SettingsModal({
                       Gemini
                     </Text>
                   </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.agentOption, provider === "codex" && styles.agentOptionActive]}
+                    onPress={() => setProviderAndModel("codex")}
+                    activeOpacity={0.8}
+                  >
+                    <View style={provider === "codex" ? undefined : styles.providerIconMuted}>
+                      <CodexIcon size={18} />
+                    </View>
+                    <Text style={[styles.agentOptionText, provider === "codex" && styles.agentOptionTextActive]}>
+                      Codex
+                    </Text>
+                  </TouchableOpacity>
                 </View>
                 <View style={styles.modelRow}>
                   {modelOptions.map((opt) => (
@@ -411,38 +419,7 @@ export function SettingsModal({
                 ))}
               </View>
 
-              {/* 5. Color Mode */}
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Color Mode</Text>
-                <View style={styles.row}>
-                  {[
-                    { value: "system", label: "System" },
-                    { value: "light", label: "Light" },
-                    { value: "dark", label: "Dark" },
-                  ].map((opt) => (
-                    <TouchableOpacity
-                      key={opt.value}
-                      style={[
-                        styles.colorModeOption,
-                        colorMode === opt.value && styles.colorModeOptionActive,
-                      ]}
-                      onPress={() => onColorModeChange(opt.value as any)}
-                      activeOpacity={0.8}
-                    >
-                      <Text
-                        style={[
-                          styles.colorModeOptionText,
-                          colorMode === opt.value && styles.colorModeOptionTextActive,
-                        ]}
-                      >
-                        {opt.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-
-              {/* 6. Brand Theme */}
+              {/* 5. Brand Theme */}
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>Brand Theme</Text>
                 <Text style={styles.themeNote}>Theme follows Code Agent selection ({provider})</Text>
@@ -776,26 +753,6 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
     themeNote: {
       fontSize: 14,
       color: theme.textMuted,
-    },
-    colorModeOption: {
-      paddingVertical: 10,
-      paddingHorizontal: 16,
-      borderRadius: 10,
-      backgroundColor: theme.cardBg,
-      borderWidth: 1,
-      borderColor: theme.borderColor,
-    },
-    colorModeOptionActive: {
-      backgroundColor: theme.accentLight,
-      borderColor: theme.accent,
-    },
-    colorModeOptionText: {
-      fontSize: 14,
-      color: theme.textPrimary,
-    },
-    colorModeOptionTextActive: {
-      color: theme.accent,
-      fontWeight: "600",
     },
   });
 }

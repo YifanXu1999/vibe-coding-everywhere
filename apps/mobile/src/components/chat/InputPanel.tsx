@@ -10,7 +10,7 @@ import {
   Modal,
   ScrollView,
 } from "react-native";
-import { GeminiIcon, ClaudeIcon, GeminiSendIcon, ClaudeSendIcon } from "../icons/ProviderIcons";
+import { GeminiIcon, ClaudeIcon, CodexIcon, GeminiSendIcon, ClaudeSendIcon, CodexSendIcon } from "../icons/ProviderIcons";
 import {
   AttachPlusIcon,
   ChevronDownIcon,
@@ -57,13 +57,13 @@ export interface InputPanelProps {
   /** Open web preview modal. */
   onOpenWebPreview?: () => void;
   /** Current AI provider (for model selector in input bar). */
-  provider?: "claude" | "gemini";
+  provider?: "claude" | "gemini" | "codex";
   /** Current model value (e.g. "sonnet", "gemini-2.5-flash"). */
   model?: string;
   /** Model options for current provider: { value, label }[]. */
   modelOptions?: { value: string; label: string }[];
   /** Called when user switches provider (resets model to default). */
-  onProviderChange?: (provider: "claude" | "gemini") => void;
+  onProviderChange?: (provider: "claude" | "gemini" | "codex") => void;
   /** Called when user selects a model. */
   onModelChange?: (model: string) => void;
 }
@@ -155,17 +155,17 @@ export function InputPanel({
         </View>
         <View style={styles.bottomRow}>
           <TouchableOpacity
-            style={[styles.btnAttach, provider === "gemini" && styles.btnAttachLight]}
+            style={[styles.btnAttach, (provider === "gemini" || provider === "codex") && styles.btnAttachLight]}
             activeOpacity={0.8}
             accessibilityLabel="Attach file"
           >
-            <AttachPlusIcon size={18} color={provider === "gemini" ? theme.accent : "#ffffff"} strokeWidth={2.1} />
+            <AttachPlusIcon size={18} color={provider === "gemini" || provider === "codex" ? theme.accent : "#ffffff"} strokeWidth={2.1} />
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.modelSelector}
-            onPress={() => (onProviderChange || onModelChange ? setModelPickerVisible(true) : null)}
+            onPress={() => (onModelChange ? setModelPickerVisible(true) : null)}
             activeOpacity={0.8}
-            disabled={!onProviderChange && !onModelChange}
+            disabled={!onModelChange}
             accessibilityLabel="Select model"
           >
             <Text style={styles.modelName}>{currentModelLabel}</Text>
@@ -206,7 +206,7 @@ export function InputPanel({
           <TouchableOpacity
             style={[
               styles.btnSend,
-              provider === "gemini" ? styles.btnSendLight : styles.btnSendDark,
+              (provider === "gemini" || provider === "codex") ? styles.btnSendLight : styles.btnSendDark,
               disabled && styles.btnSendDisabled,
             ]}
             onPress={handleSubmit}
@@ -215,6 +215,8 @@ export function InputPanel({
           >
             {provider === "gemini" ? (
               <GeminiSendIcon size={20} color={theme.accent} />
+            ) : provider === "codex" ? (
+              <CodexSendIcon size={20} color={theme.accent} />
             ) : (
               <ClaudeSendIcon size={20} color={theme.accent} />
             )}
@@ -234,29 +236,6 @@ export function InputPanel({
           onPress={() => setModelPickerVisible(false)}
         >
           <View style={styles.modelPickerCard} onStartShouldSetResponder={() => true}>
-            <Text style={styles.modelPickerTitle}>Provider</Text>
-            <View style={styles.modelPickerProviderRow}>
-              <TouchableOpacity
-                style={[styles.modelPickerProviderBtn, provider === "claude" && styles.modelPickerProviderBtnActive]}
-                onPress={() => onProviderChange?.("claude")}
-                activeOpacity={0.8}
-              >
-                <View style={provider === "claude" ? undefined : styles.providerIconMuted}>
-                  <ClaudeIcon size={18} />
-                </View>
-                <Text style={[styles.modelPickerProviderText, provider === "claude" && styles.modelPickerProviderTextActive]}>Claude</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modelPickerProviderBtn, provider === "gemini" && styles.modelPickerProviderBtnActive]}
-                onPress={() => onProviderChange?.("gemini")}
-                activeOpacity={0.8}
-              >
-                <View style={provider === "gemini" ? undefined : styles.providerIconMuted}>
-                  <GeminiIcon size={18} />
-                </View>
-                <Text style={[styles.modelPickerProviderText, provider === "gemini" && styles.modelPickerProviderTextActive]}>Gemini</Text>
-              </TouchableOpacity>
-            </View>
             <Text style={styles.modelPickerTitle}>Model</Text>
             <ScrollView style={styles.modelPickerList} keyboardShouldPersistTaps="handled">
               {modelOptions.map((opt) => (

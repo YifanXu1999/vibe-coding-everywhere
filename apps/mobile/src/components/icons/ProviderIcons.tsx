@@ -93,3 +93,28 @@ export function ClaudeIcon({ color = "currentColor", size: s = size }: { color?:
     </Svg>
   );
 }
+
+/** Codex (OpenAI) icon – simplified code/AI mark. */
+export function CodexIcon({ color = "currentColor", size: s = size }: { color?: string; size?: number }) {
+  const codexPath =
+    "M12 2L4 6v12l8 4 8-4V6l-8-4zm0 2.18l5.9 2.95V15.9L12 18.85l-5.9-2.95V7.13L12 4.18zM6 8.82v6.36l6 3 6-3V8.82l-6-3-6 3z";
+  const fillColor = color !== "currentColor" ? color : "#19c37d";
+  return (
+    <Svg width={s} height={s} viewBox={viewBox} fill="none">
+      <Path fill={fillColor} d={codexPath} fillRule="nonzero" />
+    </Svg>
+  );
+}
+
+/** Send arrow for Codex – same as GeminiSendIcon for consistency. */
+export function CodexSendIcon({ color = "currentColor", size: s = 20 }: { color?: string; size?: number }) {
+  return (
+    <Svg width={s} height={s} viewBox="0 0 24 24" fill="none">
+      <Path
+        fill={color}
+        d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8-8-8z"
+        transform="rotate(-90 12 12)"
+      />
+    </Svg>
+  );
+}
