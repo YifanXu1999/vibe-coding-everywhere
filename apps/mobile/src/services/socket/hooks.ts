@@ -281,6 +281,21 @@ export function useSocket(options: UseSocketOptions = {}) {
       });
     });
 
+    const dispatchProviderEvent = createEventDispatcher({
+      setPermissionDenials: (d) => setPermissionDenials(d ? deduplicateDenials(d) : null),
+      setModelName,
+      setWaitingForUserInput,
+      setPendingAskQuestion,
+      addMessage,
+      appendAssistantText,
+      getCurrentAssistantContent: () => currentAssistantContentRef.current,
+      deduplicateDenials,
+      recordToolUse,
+      getAndClearToolUse,
+      addPermissionDenial,
+      setSessionId,
+    });
+
     // Main output handler - receives all provider (Claude/Gemini) output
     socket.on("output", (data: string) => {
       outputBufferRef.current += data;
@@ -312,22 +327,8 @@ export function useSocket(options: UseSocketOptions = {}) {
             console.log("[socket/output] AskUserQuestion line received", (parsed as Record<string, unknown>).tool_use_id);
           }
           if (isProviderStream(parsed)) {
-            // Handle AI stream events via dispatcher (Claude/Gemini)
-            const dispatcher = createEventDispatcher({
-              setPermissionDenials: (d) => setPermissionDenials(d ? deduplicateDenials(d) : null),
-              setModelName,
-              setWaitingForUserInput,
-              setPendingAskQuestion,
-              addMessage,
-              appendAssistantText,
-              getCurrentAssistantContent: () => currentAssistantContentRef.current,
-              deduplicateDenials,
-              recordToolUse,
-              getAndClearToolUse,
-              addPermissionDenial,
-              setSessionId,
-            });
-            dispatcher(parsed);
+            // Handle AI stream events via shared dispatcher (Claude/Gemini/Codex)
+            dispatchProviderEvent(parsed as Record<string, unknown>);
           } else {
             appendAssistantText(clean + "\n");
           }
@@ -339,21 +340,7 @@ export function useSocket(options: UseSocketOptions = {}) {
             try {
               const parsed = JSON.parse(clean.slice(jsonStart));
               if (isProviderStream(parsed)) {
-                const dispatcher = createEventDispatcher({
-                  setPermissionDenials: (d) => setPermissionDenials(d ? deduplicateDenials(d) : null),
-                  setModelName,
-                  setWaitingForUserInput,
-                  setPendingAskQuestion,
-                  addMessage,
-                  appendAssistantText,
-                  getCurrentAssistantContent: () => currentAssistantContentRef.current,
-                  deduplicateDenials,
-                  recordToolUse,
-                  getAndClearToolUse,
-                  addPermissionDenial,
-                  setSessionId,
-                });
-                dispatcher(parsed);
+                dispatchProviderEvent(parsed as Record<string, unknown>);
                 continue;
               }
             } catch {

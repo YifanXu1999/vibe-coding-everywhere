@@ -32,6 +32,13 @@ export interface EventContext {
 
 export type EventHandler = (data: Record<string, unknown>, ctx: EventContext) => void;
 
+export interface ProviderContentBlock {
+  type?: string;
+  text?: string;
+  name?: string;
+  input?: unknown;
+}
+
 /** Basename for display (no Node path dependency). */
 export function basename(filePath: string): string {
   const s = String(filePath).replace(/\\/g, "/").trim();
@@ -53,6 +60,74 @@ function fileActivityLink(label: string, filePath: string | null): string {
 /** Format one compact file activity line where only filename is clickable. */
 function fileActivityLine(prefix: string, file: string, filePath: string): string {
   return `${prefix} ${fileActivityLink(file, filePath)}`;
+}
+
+/** Shared formatter for session start metadata emitted by provider CLIs. */
+export function applySessionStartMetadata(
+  data: Record<string, unknown>,
+  ctx: EventContext
+): void {
+  const info: string[] = [];
+  if (data.session_id != null && data.session_id !== "") {
+    const id = String(data.session_id);
+    info.push(`Session ID: ${id}`);
+    ctx.setSessionId?.(id);
+  }
+  if (data.model) {
+    ctx.setModelName(String(data.model));
+    info.push(`Model: ${data.model}`);
+  }
+  if (data.cwd) info.push(`Working Directory: ${data.cwd}`);
+  if (info.length) console.log("[session]", info.join("\n"));
+}
+
+/** Append one tool-use display line in a consistent format. */
+export function appendToolUseDisplayLine(
+  ctx: EventContext,
+  name: string,
+  input: unknown
+): void {
+  const line = formatToolUseForDisplay(name, input);
+  ctx.appendAssistantText(`\n\n${line}\n\n`);
+}
+
+/** Join all text blocks from provider content arrays. */
+export function collectTextFromContentBlocks(contents: ProviderContentBlock[]): string {
+  return contents
+    .filter((c) => c.type === "text")
+    .map((c) => c.text ?? "")
+    .join("");
+}
+
+/** Append only delta when provider sends a full accumulated assistant snapshot. */
+export function appendSnapshotTextDelta(ctx: EventContext, fullText: string): void {
+  if (!fullText) return;
+  const current = ctx.getCurrentAssistantContent();
+  const delta =
+    current.length > 0 && fullText.startsWith(current)
+      ? fullText.slice(current.length)
+      : fullText;
+  if (delta) ctx.appendAssistantText(delta);
+}
+
+/**
+ * Append assistant text while deduplicating overlap with existing content.
+ * Useful for providers that stream partial chunks and later emit full item text.
+ */
+export function appendOverlapTextDelta(ctx: EventContext, text: string): void {
+  if (!text) return;
+  const current = ctx.getCurrentAssistantContent();
+  if (current.endsWith(text)) return;
+  let overlap = 0;
+  const maxLen = Math.min(current.length, text.length);
+  for (let len = maxLen; len > 0; len--) {
+    if (current.endsWith(text.substring(0, len))) {
+      overlap = len;
+      break;
+    }
+  }
+  const delta = text.substring(overlap);
+  if (delta) ctx.appendAssistantText(delta);
 }
 
 /** Format one tool_use block as a short human-readable markdown line for the assistant bubble. */

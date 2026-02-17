@@ -185,10 +185,20 @@ export function createCodexAppServerSession({
   /** Stream for llm-cli-input-output output.log (current Codex turn). Set at turn start, closed on turn/completed or process close. */
   let codexIoOutputStream = null;
 
-  function emitCodexEvent(event) {
-    const line = JSON.stringify(event) + "\n";
+  function emitOutputLine(line) {
     socket.emit("output", line);
     if (codexIoOutputStream?.writable) codexIoOutputStream.write(line);
+  }
+
+  function emitCodexEvent(event) {
+    const line = JSON.stringify(event) + "\n";
+    emitOutputLine(line);
+  }
+
+  function writeApprovalDecisionResponse(idRaw, approved) {
+    codexAppProcess?.stdin?.write(
+      JSON.stringify({ id: idRaw, result: { decision: approved ? "accept" : "decline" } }) + "\n"
+    );
   }
 
   function closeCodexIoOutputStream() {
@@ -237,8 +247,7 @@ export function createCodexAppServerSession({
         codexPendingServerRequest = { id: reqId, idRaw: reqIdRaw, method, params: parsed.params };
         console.log("[codex] emitting AskUserQuestion for", method);
         const line = JSON.stringify(askPayload) + "\n";
-        socket.emit("output", line);
-        if (codexIoOutputStream?.writable) codexIoOutputStream.write(line);
+        emitOutputLine(line);
       } else {
         // Unknown request type: decline by default so turn can continue safely.
         try {
@@ -370,8 +379,7 @@ export function createCodexAppServerSession({
           handleCodexAppServerMessage(parsed);
         } catch (_) {
           const out = line + "\n";
-          socket.emit("output", out);
-          if (codexIoOutputStream?.writable) codexIoOutputStream.write(out);
+          emitOutputLine(out);
         }
       }
     });
@@ -499,13 +507,11 @@ export function createCodexAppServerSession({
     codexPendingServerRequest = null;
 
     if (pending.method === "item/commandExecution/requestApproval") {
-      const result = { decision: approved ? "accept" : "decline" };
-      codexAppProcess.stdin.write(JSON.stringify({ id: pending.idRaw, result }) + "\n");
+      writeApprovalDecisionResponse(pending.idRaw, approved);
       return true;
     }
     if (pending.method === "item/fileChange/requestApproval") {
-      const result = { decision: approved ? "accept" : "decline" };
-      codexAppProcess.stdin.write(JSON.stringify({ id: pending.idRaw, result }) + "\n");
+      writeApprovalDecisionResponse(pending.idRaw, approved);
       return true;
     }
     if (pending.method === "item/tool/requestUserInput") {

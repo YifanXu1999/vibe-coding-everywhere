@@ -1,5 +1,11 @@
 import type { EventContext, EventHandler } from "../types";
-import { formatToolUseForDisplay } from "../types";
+import {
+  applySessionStartMetadata,
+  appendSnapshotTextDelta,
+  appendToolUseDisplayLine,
+  collectTextFromContentBlocks,
+  type ProviderContentBlock,
+} from "../types";
 
 /**
  * Register Gemini CLI-specific event handlers into the given registry.
@@ -14,18 +20,7 @@ export function registerGeminiHandlers(
 ): void {
   /** Gemini CLI sends "init" instead of "system" for session start. */
   registry.set("init", (data) => {
-    const info: string[] = [];
-    if (data.session_id != null && data.session_id !== "") {
-      const id = String(data.session_id);
-      info.push(`Session ID: ${id}`);
-      ctx.setSessionId?.(id);
-    }
-    if (data.model) {
-      ctx.setModelName(String(data.model));
-      info.push(`Model: ${data.model}`);
-    }
-    if (data.cwd) info.push(`Working Directory: ${data.cwd}`);
-    if (info.length) console.log("[session]", info.join("\n"));
+    applySessionStartMetadata(data, ctx);
   });
 
   /**
@@ -54,11 +49,7 @@ export function registerGeminiHandlers(
         ctx.appendAssistantText(content);
       } else {
         // Full message: deduplicate against already-displayed content
-        const current = ctx.getCurrentAssistantContent();
-        const delta = current.length > 0 && content.startsWith(current)
-          ? content.slice(current.length)
-          : content;
-        if (delta) ctx.appendAssistantText(delta);
+        appendSnapshotTextDelta(ctx, content);
       }
       return;
     }
@@ -66,23 +57,14 @@ export function registerGeminiHandlers(
     // Format 2: Array content (tool_use blocks, text parts, etc.)
     const msg = data.message ?? data;
     const rawContents = (msg as Record<string, unknown>).content ?? (msg as Record<string, unknown>).parts;
-    const contents: Array<{ type?: string; text?: string; name?: string; input?: unknown }> =
+    const contents: ProviderContentBlock[] =
       Array.isArray(rawContents) ? rawContents : [];
 
     for (const c of contents) {
       if (c.type === "tool_use" && c.name) {
-        const line = formatToolUseForDisplay(c.name, c.input);
-        ctx.appendAssistantText("\n\n" + line + "\n\n");
+        appendToolUseDisplayLine(ctx, c.name, c.input);
       }
     }
-    const full = contents
-      .filter((c) => c.type === "text")
-      .map((c) => (c as { text?: string }).text ?? "")
-      .join("");
-    if (full) {
-      const current = ctx.getCurrentAssistantContent();
-      const delta = current.length > 0 && full.startsWith(current) ? full.slice(current.length) : full;
-      if (delta) ctx.appendAssistantText(delta);
-    }
+    appendSnapshotTextDelta(ctx, collectTextFromContentBlocks(contents));
   });
 }

@@ -6,7 +6,7 @@
  */
 import type { PermissionDenial, PendingAskUserQuestion } from "../../core/types";
 import type { EventContext, EventHandler } from "./types";
-import { formatToolUseForDisplay } from "./types";
+import { appendToolUseDisplayLine } from "./types";
 import { isAskUserQuestionPayload } from "./stream";
 import { registerClaudeHandlers } from "./claude/eventHandlers";
 import { registerGeminiHandlers } from "./gemini/eventHandlers";
@@ -100,8 +100,7 @@ function createHandlerRegistry(ctx: EventContext): Map<string, EventHandler> {
     const toolInput = (data.parameters ?? data.tool_input ?? data.input) as Record<string, unknown> | undefined;
     if (toolId && toolName) {
       ctx.recordToolUse?.(toolId, { tool_name: toolName, tool_input: toolInput });
-      const line = formatToolUseForDisplay(toolName, toolInput);
-      ctx.appendAssistantText("\n\n" + line + "\n\n");
+      appendToolUseDisplayLine(ctx, toolName, toolInput);
     }
   });
 

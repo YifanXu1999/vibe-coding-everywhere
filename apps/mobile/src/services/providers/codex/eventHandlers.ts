@@ -1,5 +1,8 @@
 import type { EventContext, EventHandler } from "../types";
-import { formatToolUseForDisplay } from "../types";
+import {
+  appendOverlapTextDelta,
+  appendToolUseDisplayLine,
+} from "../types";
 
 /**
  * Codex errors that mean the saved thread is invalid (e.g. state db missing rollout path for thread).
@@ -52,8 +55,7 @@ export function registerCodexHandlers(
   registry.set("item.started", (data) => {
     const item = data.item as { type?: string; command?: string } | undefined;
     if (item?.type === "command_execution" && typeof item.command === "string" && item.command) {
-      const line = formatToolUseForDisplay("Bash", { command: item.command });
-      ctx.appendAssistantText("\n\n" + line + "\n\n");
+      appendToolUseDisplayLine(ctx, "Bash", { command: item.command });
     }
   });
 
@@ -77,23 +79,9 @@ export function registerCodexHandlers(
     } | undefined;
     if (!item) return;
     if (item.type === "agent_message" && typeof item.text === "string" && item.text) {
-      const current = ctx.getCurrentAssistantContent();
       // item.updated events already streamed this text incrementally.
-      // current may also contain tool-use display lines (from item.started)
-      // prepended before the agent message, so use endsWith (not startsWith).
-      if (current.endsWith(item.text)) return;
-      // Partial streaming: find overlap between end of current and start of item.text.
-      const text = item.text;
-      let overlap = 0;
-      const maxLen = Math.min(current.length, text.length);
-      for (let len = maxLen; len > 0; len--) {
-        if (current.endsWith(text.substring(0, len))) {
-          overlap = len;
-          break;
-        }
-      }
-      const delta = text.substring(overlap);
-      if (delta) ctx.appendAssistantText(delta);
+      // current may also contain tool-use display lines prepended before the agent message.
+      appendOverlapTextDelta(ctx, item.text);
       return;
     }
     if (item.type === "command_execution") {
@@ -104,17 +92,16 @@ export function registerCodexHandlers(
       for (const ch of item.changes) {
         const kind = ch.kind ?? "change";
         const pathStr = ch.path ?? "";
-        const line = formatToolUseForDisplay(
+        appendToolUseDisplayLine(
+          ctx,
           kind === "create" ? "Write" : kind === "edit" ? "Edit" : "Read",
           pathStr ? { file_path: pathStr, path: pathStr } : {}
         );
-        ctx.appendAssistantText("\n\n" + line + "\n\n");
       }
       return;
     }
     if (item.type === "mcp_tool_call" && item.tool) {
-      const line = formatToolUseForDisplay(item.tool, item.arguments ?? {});
-      ctx.appendAssistantText("\n\n" + line + "\n\n");
+      appendToolUseDisplayLine(ctx, item.tool, item.arguments ?? {});
     }
   });
 
