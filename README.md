@@ -1,6 +1,6 @@
 # Vibe Coding Everywhere
 
-Web and mobile clients that connect to a local AI coding assistant (Claude Code CLI, Gemini CLI, or Codex) via Socket.IO. The server spawns the selected CLI in a PTY and streams output in real time. Codex uses session-id-based resume: the first turn runs `codex exec --json`, and later turns use `codex exec resume <thread_id> --json` (with a fallback to `resume --last` when no thread id is available).
+Web and mobile clients that connect to a local AI coding assistant (Claude Code CLI, Gemini CLI, or Codex) via Socket.IO. Claude/Gemini run in PTY sessions; Codex runs through `codex app-server` RPC with thread-based continuation (`thread_id`).
 
 ## Table of Contents
 
@@ -32,7 +32,7 @@ See [Quick Start Guide](docs/QUICKSTART.md) for the fastest setup.
 - At least one AI CLI installed and in PATH:
   - [Claude Code CLI](https://docs.anthropic.com/claude/docs/claude-code)
   - [Gemini CLI](https://github.com/google/gemini-cli) (`npm i -g @google/gemini-cli`)
-  - [Codex](https://github.com/cursor/codex) (for `codex exec --json` and session-id resume)
+  - [Codex](https://github.com/cursor/codex) (for `codex app-server` and thread-based continuation)
 - (Optional) [Tailscale](https://tailscale.com) for mobile access
 
 ### Installation
@@ -74,7 +74,7 @@ See [Mobile Setup](#mobile-setup) below.
 └─────────────────┘                    └────────┬─────────┘
                                                 │
 ┌─────────────────┐     Socket.IO      ┌───────▼─────────┐
-│  Mobile Client  │ ◄────────────────► │  AI CLI (PTY)   │
+│  Mobile Client  │ ◄────────────────► │ AI Process Layer│
 │  (iOS/Android)  │                    │ Claude/Gemini/  │
 └─────────────────┘                    │ Codex           │
                                        └─────────────────┘
@@ -89,10 +89,10 @@ server/
 ├── config/         # Environment configuration
 ├── utils/          # Utility functions (ANSI stripping, workspace tree)
 ├── prompts/        # System prompt loading (Claude)
-├── process/        # AI provider PTY management (Claude/Gemini/Codex)
+├── process/        # AI provider process management
 │   ├── claude.js   # Claude CLI config
 │   ├── gemini.js   # Gemini CLI config
-│   └── codex.js    # Codex CLI config (exec --json, resume by thread_id)
+│   └── codexAppServerSession.js  # Codex app-server session state/RPC bridge
 ├── routes/         # Express API routes
 └── socket/         # Socket.IO event handlers
 ```
@@ -255,7 +255,8 @@ npm run icons:convert  # Convert icons
 **New AI Provider:**
 
 1. Add config in `server/process/<provider>.js`
-2. Register in `server/process/index.js` (`PROVIDER_CONFIG`)
+2. For PTY providers, register in `server/process/index.js` (`PTY_PROVIDER_CONFIG`)
+3. For non-PTY providers (e.g. Codex app-server), add a session module and wire it in `createProcessManager`
 
 **New AI Event Handler (mobile):**
 

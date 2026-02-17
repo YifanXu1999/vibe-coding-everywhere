@@ -145,7 +145,7 @@ export function isGeminiStreamOutput(data: unknown): data is GeminiStreamOutput 
 }
 
 // ---------------------------------------------------------------------------
-// Codex stream format (codex exec --json JSONL)
+// Codex stream format (normalized events emitted from codex app-server RPC).
 // ---------------------------------------------------------------------------
 
 /** Codex thread started (thread_id is session id for resume). */

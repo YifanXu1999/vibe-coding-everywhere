@@ -132,7 +132,7 @@ Start a new AI session (Claude, Gemini, or Codex) with a prompt.
 }
 ```
 
-**Codex continuation:** For subsequent turns in the same session, the server uses the `thread_id` from the first turn’s `thread.started` JSONL event. If no session id is available, it falls back to `codex exec resume --last`.
+**Codex continuation:** For subsequent turns in the same session, the server reuses the same `thread_id` from `thread.started` and calls `turn/start` on Codex app-server.
 
 **Example:**
 

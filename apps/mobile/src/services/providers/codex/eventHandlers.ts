@@ -21,7 +21,7 @@ function normalizeCodexErrorMessage(raw: string, ctx: EventContext): string {
 }
 
 /**
- * Register Codex CLI (codex exec --json) event handlers into the given registry.
+ * Register normalized Codex event handlers (mapped from codex app-server RPC events).
  *
  * Codex sends: thread.started, turn.started, turn.completed, turn.failed,
  * item.started, item.updated, item.completed, error.

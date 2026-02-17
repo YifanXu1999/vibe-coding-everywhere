@@ -37,6 +37,6 @@ import { setupSocketHandlers } from "./server/socket/index.js";
 
 1. **New API routes**: Add to `server/routes/index.js`
 2. **New Socket events**: Add to `server/socket/index.js`
-3. **New AI provider**: Add `server/process/<provider>.js` and register in `process/index.js` (`PROVIDER_CONFIG`)
+3. **New PTY AI provider**: Add `server/process/<provider>.js` and register in `process/index.js` (`PTY_PROVIDER_CONFIG`)
 4. **New utilities**: Add to appropriate module or create new module
 5. **New configuration**: Add to `server/config/index.js`
