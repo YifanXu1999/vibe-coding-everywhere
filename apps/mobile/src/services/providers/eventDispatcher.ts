@@ -147,6 +147,12 @@ export function createEventDispatcher(ctx: EventContext): (data: Record<string, 
       }
     }
     if (isAskUserQuestionPayload(data)) {
+      if (__DEV__) {
+        console.log("[eventDispatcher] AskUserQuestion received", {
+          tool_use_id: (data as Record<string, unknown>).tool_use_id,
+          questionsCount: ((data as Record<string, unknown>).tool_input as { questions?: unknown[] })?.questions?.length,
+        });
+      }
       const pending = normalizeAskUserQuestionPayload(data);
       if (pending) {
         ctx.setPendingAskQuestion(pending);

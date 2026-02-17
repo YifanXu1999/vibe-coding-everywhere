@@ -319,7 +319,7 @@ export function getTheme(provider: Provider, mode: ColorMode = "light"): DesignT
 // Default theme - lazy to avoid Dimensions at module load (runtime not ready on Hermes)
 let _defaultTheme: DesignTheme | null = null;
 export function getDefaultTheme(): DesignTheme {
-  return _defaultTheme ?? (_defaultTheme = getTheme("gemini", "light"));
+  return _defaultTheme ?? (_defaultTheme = getTheme("codex", "light"));
 }
 
 // ============================================================================
@@ -334,7 +334,7 @@ type ThemeContextValue = {
 };
 
 const defaultContextValue: ThemeContextValue = { 
-  provider: "gemini", 
+  provider: "codex", 
   colorMode: "system" 
 };
 
@@ -349,7 +349,7 @@ export interface ThemeProviderProps {
 }
 
 export function ThemeProvider({
-  provider = "gemini",
+  provider = "codex",
   colorMode = "system",
   onProviderChange,
   onColorModeChange,
@@ -396,7 +396,7 @@ export function useProvider(): Provider {
   } catch (_) {
     // Fall through to default
   }
-  return "gemini";
+  return "codex";
 }
 
 export function useColorMode(): ColorMode {
@@ -413,7 +413,7 @@ export function useColorMode(): ColorMode {
 export function useTheme(): DesignTheme {
   const ctx = React.useContext(ThemeContext);
   const mode = useColorMode();
-  const provider = ctx?.provider ?? "gemini";
+  const provider = ctx?.provider ?? "codex";
   
   return useMemo(() => buildTheme(provider, mode), [provider, mode]);
 }

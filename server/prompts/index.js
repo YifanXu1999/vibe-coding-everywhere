@@ -3,7 +3,7 @@
  */
 import fs from "fs";
 import path from "path";
-import { PROMPTS_DIR, getWorkspaceCwd } from "../config/index.js";
+import { PROMPTS_DIR, getWorkspaceCwd, projectRoot } from "../config/index.js";
 import { getFormattedAccessRestrictionPrompt } from "../../prompts/access-restriction/formatAccessRestrictionPrompt.js";
 import { getPreviewHost } from "../utils/index.js";
 
@@ -136,3 +136,4 @@ export function getChatSystemPrompt() {
   prompt = prompt.split(PREVIEW_HOST_PLACEHOLDER).join(previewHost);
   return prompt;
 }
+

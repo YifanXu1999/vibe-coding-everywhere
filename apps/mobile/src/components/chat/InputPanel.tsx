@@ -83,7 +83,7 @@ export function InputPanel({
   onOpenTerminal,
   onTerminateAgent,
   onOpenWebPreview,
-  provider = "gemini",
+  provider = "codex",
   model = "gemini-2.5-flash",
   modelOptions = [],
   onProviderChange,

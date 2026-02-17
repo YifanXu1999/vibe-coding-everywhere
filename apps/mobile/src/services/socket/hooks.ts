@@ -19,6 +19,7 @@ import {
   isAskUserQuestionPayload,
   getAllowedToolsFromDenials,
   isProviderSystemNoise,
+  isCodexSessionInvalidStderr,
 } from "../providers/stream";
 import type {
   Message,
@@ -54,6 +55,14 @@ function toWorkspaceRelativePath(filePath: string, workspaceRoot: string | null)
   return rel || normalized;
 }
 
+/** Try to extract a preview URL (e.g. http://localhost:8000) from a command for port cleanup. */
+function tryExtractPreviewUrl(command: string): string | null {
+  const match = command.match(/https?:\/\/(?:localhost|0\.0\.0\.0)(?::(\d+))?/i);
+  if (!match) return null;
+  const port = match[1] ?? "80";
+  return match[0].includes(":") ? match[0] : `${match[0]}:${port}`;
+}
+
 /** Options for useSocket hook */
 export interface UseSocketOptions {
   /** Injected server config (base URL). Defaults to env-based config. */
@@ -74,7 +83,7 @@ export function useSocket(options: UseSocketOptions = {}) {
   // Server configuration - can be injected for testing
   const serverConfig = options.serverConfig ?? getDefaultServerConfig();
   const serverUrl = serverConfig.getBaseUrl();
-  const provider = options.provider ?? "gemini";
+  const provider = options.provider ?? "codex";
   const defaultModel =
     provider === "claude" ? "sonnet" : provider === "codex" ? "gpt-5-codex" : "gemini-2.5-flash";
   const model = options.model ?? defaultModel;
@@ -126,6 +135,7 @@ export function useSocket(options: UseSocketOptions = {}) {
   const workspaceRootRef = useRef<string | null>(null);
   const pendingRunCommandRef = useRef<string | null>(null);
   const pendingCommandAfterNewTerminalRef = useRef<string | null>(null);
+  const lastStartedViaRunCommandRef = useRef(false);
   const toolUseByIdRef = useRef<Map<string, { tool_name: string; tool_input?: Record<string, unknown> }>>(new Map());
 
   /**
@@ -287,10 +297,20 @@ export function useSocket(options: UseSocketOptions = {}) {
 
         // Filter known provider CLI system noise (Gemini startup messages, etc.)
         if (isProviderSystemNoise(clean)) continue;
-        
+
+        // Codex stderr: "missing rollout path for thread" — treat as session invalid, show friendly message
+        if (isCodexSessionInvalidStderr(clean)) {
+          setSessionId(null);
+          addMessage("system", "This session is no longer available. Start a new chat to continue.");
+          continue;
+        }
+
         // Try to parse as JSON (provider stream format)
         try {
           const parsed = JSON.parse(clean);
+          if (__DEV__ && isAskUserQuestionPayload(parsed)) {
+            console.log("[socket/output] AskUserQuestion line received", (parsed as Record<string, unknown>).tool_use_id);
+          }
           if (isProviderStream(parsed)) {
             // Handle AI stream events via dispatcher (Claude/Gemini)
             const dispatcher = createEventDispatcher({
@@ -366,14 +386,24 @@ export function useSocket(options: UseSocketOptions = {}) {
 
     // Terminal/run-render events
     socket.on("run-render-started", ({ terminalId, pid }: { terminalId: string; pid: number | null }) => {
-      setTerminals((prev) => [...prev, { id: terminalId, pid, lines: [], active: true, lastCommand: pendingRunCommandRef.current, isSingleCommand: false }]);
+      const cmd = pendingRunCommandRef.current ?? null;
+      const isSingleCommand = lastStartedViaRunCommandRef.current;
+      setTerminals((prev) => [...prev, { id: terminalId, pid, lines: [], active: true, lastCommand: cmd, isSingleCommand }]);
+      setSelectedTerminalId(terminalId); // Show this terminal's output
       setRunProcessActive(true);
-      
-      // If we have a pending command for this terminal, send it
+
+      // Echo the command in the output so the terminal shows "$ command" before stdout/stderr
+      if (cmd && cmd.trim() !== "") {
+        const echoLine = `$ ${cmd.trim()}\n`;
+        setRunOutputLines((prev) => [...prev, { type: "stdout", text: echoLine }]);
+      }
+
+      // Only write to stdin when we opened an interactive new terminal (not run-render-command)
       if (pendingCommandAfterNewTerminalRef.current) {
         socket.emit("run-render-write", { terminalId, data: pendingCommandAfterNewTerminalRef.current + "\n" });
         pendingCommandAfterNewTerminalRef.current = null;
       }
+      lastStartedViaRunCommandRef.current = false;
     });
 
     socket.on("run-render-stdout", ({ terminalId, chunk }: { terminalId: string; chunk: string }) => {
@@ -393,15 +423,16 @@ export function useSocket(options: UseSocketOptions = {}) {
 
     socket.on("run-render-stderr", ({ terminalId, chunk }: { terminalId: string; chunk: string }) => {
       const cleaned = stripTrailingIncompleteTag(stripAnsi(chunk));
-      if (!cleaned) return;
+      const filtered = filterBashNoise(cleaned);
+      if (!filtered) return;
       setTerminals((prev) => {
         const idx = prev.findIndex((t) => t.id === terminalId);
         if (idx === -1) return prev;
         const next = [...prev];
-        next[idx] = { ...next[idx], lines: [...next[idx].lines, { type: "stderr", text: cleaned }] };
+        next[idx] = { ...next[idx], lines: [...next[idx].lines, { type: "stderr", text: filtered }] };
         return next;
       });
-      setRunOutputLines((prev) => [...prev, { type: "stderr", text: cleaned }]);
+      setRunOutputLines((prev) => [...prev, { type: "stderr", text: filtered }]);
     });
 
     socket.on("run-render-exit", ({ terminalId, code }: { terminalId: string; code: number | null }) => {
@@ -541,25 +572,36 @@ export function useSocket(options: UseSocketOptions = {}) {
   }, []);
 
   /**
-   * Create a new interactive terminal.
+   * Create a new interactive terminal (bash/zsh); no command is run until user types or runs one.
    */
   const runNewTerminal = useCallback(() => {
     if (!socketRef.current) return;
+    lastStartedViaRunCommandRef.current = false;
+    pendingRunCommandRef.current = null;
+    pendingCommandAfterNewTerminalRef.current = null;
     socketRef.current.emit("run-render-new-terminal");
     setRunCommand(null);
     setRunOutputLines([]);
   }, []);
 
   /**
-   * Run a command in a new terminal.
+   * Run a command in a new terminal (executes via run-render-command on server).
+   * Uses a dedicated process with proper shell env so the command actually runs
+   * (avoids interactive bash where e.g. python may not be in PATH).
    * @param command - Shell command to execute
    */
   const runCommandInNewTerminal = useCallback(
     (command: string) => {
       if (!socketRef.current) return;
-      pendingRunCommandRef.current = command;
-      pendingCommandAfterNewTerminalRef.current = command;
-      socketRef.current.emit("run-render-new-terminal");
+      const trimmed = command.trim();
+      if (!trimmed) return;
+      lastStartedViaRunCommandRef.current = true;
+      pendingRunCommandRef.current = trimmed;
+      // Do not set pendingCommandAfterNewTerminalRef — we use run-render-command, not new-terminal + write
+      setRunCommand(trimmed);
+      setRunOutputLines([]); // Show only this command's output
+      const url = tryExtractPreviewUrl(trimmed);
+      socketRef.current.emit("run-render-command", { command: trimmed, url: url ?? undefined });
     },
     []
   );

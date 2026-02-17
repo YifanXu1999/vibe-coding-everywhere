@@ -25,7 +25,7 @@ interface RunOutputViewProps {
   onFullScreen?: () => void;
   /** When true, allow the output area to grow (e.g. in fullscreen modal). */
   flexOutput?: boolean;
-  /** When false, do not show the last command bar at the bottom (e.g. when user types in an input below). Default true. */
+  /** When false, do not show the last command bar at the bottom. Command is always shown inside the output as the first line when provided. Default true for backward compat. */
   showCommand?: boolean;
   /** When provided, URLs in output are shown as underlined links and open in the app's internal browser. */
   onOpenUrl?: (url: string) => void;
@@ -149,7 +149,20 @@ export function RunOutputView({
     }
   }, [lines.length]);
 
-  const isEmpty = lines.length === 0;
+  // When command is provided, show it as the first line inside the output (not in a bar at the bottom).
+  // Skip prepend if the first line is already the command echo (e.g. from runOutputLines).
+  const firstIsEcho =
+    lines.length > 0 &&
+    command != null &&
+    command !== "" &&
+    lines[0].type === "stdout" &&
+    lines[0].text.trim().startsWith(`$ ${command.trim()}`);
+  const displayLines: RunOutputLine[] =
+    command != null && command !== "" && !firstIsEcho
+      ? [{ type: "stdout", text: `$ ${command}\n` }, ...lines]
+      : lines;
+
+  const isEmpty = displayLines.length === 0;
   const showContainer = isEmpty && !showWhenEmpty && !command;
   if (showContainer) return null;
 
@@ -166,7 +179,7 @@ export function RunOutputView({
               <Text style={styles.fullScreenIcon}>⛶</Text>
             </TouchableOpacity>
           )}
-          {onTerminate && (lines.length > 0 || showWhenEmpty || command) && (
+          {onTerminate && (displayLines.length > 0 || showWhenEmpty || command) && (
             <TouchableOpacity onPress={onTerminate} hitSlop={8} style={styles.terminateButton}>
               <Text style={styles.terminateIcon}>×</Text>
               <Text style={styles.terminateText}>Terminate</Text>
@@ -187,7 +200,7 @@ export function RunOutputView({
           showsHorizontalScrollIndicator={false}
           nestedScrollEnabled
         >
-          {lines.map((line, i) => {
+          {displayLines.map((line, i) => {
             const plain = stripAnsi(line.text);
             const segments = segmentLine(plain);
             const hasUrl = segments.some((s) => s.type === "url");
@@ -219,14 +232,7 @@ export function RunOutputView({
           })}
         </ScrollView>
       )}
-      {showCommand && command != null && command !== "" && (
-        <View style={styles.commandBar}>
-          <Text style={styles.commandPrefix}>$ </Text>
-          <Text style={styles.commandText} selectable numberOfLines={2}>
-            {command}
-          </Text>
-        </View>
-      )}
+      {/* Command is shown inside the output as the first line; do not show a separate bar at the bottom */}
     </View>
   );
 }

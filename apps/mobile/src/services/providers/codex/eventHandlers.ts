@@ -1,12 +1,11 @@
 import type { EventContext, EventHandler } from "../types";
 import { formatToolUseForDisplay } from "../types";
 
-/** Codex errors that mean the saved thread is invalid; show friendly message and clear session. */
-const SESSION_INVALID_PATTERNS = [
-  "missing rollout path for thread",
-  "state db",
-  "rollout path for thread",
-];
+/**
+ * Codex errors that mean the saved thread is invalid (e.g. state db missing rollout path for thread).
+ * We match only this exact case so other "state db" errors do not clear the session.
+ */
+const SESSION_INVALID_PATTERNS = ["missing rollout path for thread"];
 
 function isSessionInvalidError(message: string): boolean {
   const lower = message.toLowerCase();
@@ -50,7 +49,13 @@ export function registerCodexHandlers(
     ctx.addMessage("system", msg);
   });
 
-  registry.set("item.started", () => {});
+  registry.set("item.started", (data) => {
+    const item = data.item as { type?: string; command?: string } | undefined;
+    if (item?.type === "command_execution" && typeof item.command === "string" && item.command) {
+      const line = formatToolUseForDisplay("Bash", { command: item.command });
+      ctx.appendAssistantText("\n\n" + line + "\n\n");
+    }
+  });
 
   registry.set("item.updated", (data) => {
     const item = data.item as { type?: string; text?: string } | undefined;
@@ -73,15 +78,26 @@ export function registerCodexHandlers(
     if (!item) return;
     if (item.type === "agent_message" && typeof item.text === "string" && item.text) {
       const current = ctx.getCurrentAssistantContent();
-      const delta = current.length > 0 && item.text.startsWith(current)
-        ? item.text.slice(current.length)
-        : item.text;
+      // item.updated events already streamed this text incrementally.
+      // current may also contain tool-use display lines (from item.started)
+      // prepended before the agent message, so use endsWith (not startsWith).
+      if (current.endsWith(item.text)) return;
+      // Partial streaming: find overlap between end of current and start of item.text.
+      const text = item.text;
+      let overlap = 0;
+      const maxLen = Math.min(current.length, text.length);
+      for (let len = maxLen; len > 0; len--) {
+        if (current.endsWith(text.substring(0, len))) {
+          overlap = len;
+          break;
+        }
+      }
+      const delta = text.substring(overlap);
       if (delta) ctx.appendAssistantText(delta);
       return;
     }
-    if (item.type === "command_execution" && item.command) {
-      const line = formatToolUseForDisplay("Bash", { command: item.command });
-      ctx.appendAssistantText("\n\n" + line + "\n\n");
+    if (item.type === "command_execution") {
+      // Command was already shown on item.started; only optional output/status could be added here if needed
       return;
     }
     if (item.type === "file_change" && Array.isArray(item.changes) && item.changes.length > 0) {

@@ -27,7 +27,7 @@ const RING_ARC_D = `M ${startX} ${startY} A ${RING_RADIUS} ${RING_RADIUS} 0 0 1 
 const SPIN_DURATION_MS = 300;
 const SPIN_DELAY_MS = 2000;
 
-export function TypingIndicator({ visible, provider = "gemini" }: TypingIndicatorProps) {
+export function TypingIndicator({ visible, provider = "codex" }: TypingIndicatorProps) {
   const theme = useTheme();
   const ringSpin = useRef(new Animated.Value(0)).current;
   const iconSpin = useRef(new Animated.Value(0)).current;

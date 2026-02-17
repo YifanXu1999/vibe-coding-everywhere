@@ -102,8 +102,38 @@ export const SIDEBAR_REFRESH_INTERVAL_MS = parseInt(process.env.SIDEBAR_REFRESH_
 // Default Claude permission mode (default, acceptEdits, bypassPermissions, etc.)
 export const DEFAULT_PERMISSION_MODE = process.env.DEFAULT_PERMISSION_MODE || "bypassPermissions";
 
-// AI provider: "claude" or "gemini"
-export const DEFAULT_PROVIDER = process.env.DEFAULT_PROVIDER || "gemini";
+// AI provider: "claude", "gemini", or "codex"
+export const DEFAULT_PROVIDER = process.env.DEFAULT_PROVIDER || "codex";
+
+/** Codex CLI profile name (from ~/.codex/config.toml [profiles.<name>]). When set, codex exec is run with --profile <name> so system prompt / model_instructions_file etc. are loaded from that profile. */
+export const CODEX_PROFILE = process.env.CODEX_PROFILE || "";
+
+/** Relative path under project root for Codex project profile (instructions file). Resolved to projectRoot + "/profile". */
+export const CODEX_PROJECT_PROFILE_DIR = "profile";
+
+/**
+ * Resolve path to an instructions file under baseDir/profile for Codex.
+ * Looks for instructions.md, AGENTS.md, or the first .md file in that directory.
+ * Call with projectRoot so the repo's profile/ is used regardless of workspace.
+ * @param {string} baseDir - Base directory (e.g. projectRoot for repo profile/)
+ * @returns {string | null} Absolute path to the instructions file, or null if none found
+ */
+export function getCodexProjectProfileInstructionsPath(baseDir) {
+  const dir = path.join(baseDir, CODEX_PROJECT_PROFILE_DIR);
+  try {
+    if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return null;
+    const prefer = ["instructions.md", "AGENTS.md"];
+    for (const name of prefer) {
+      const p = path.join(dir, name);
+      if (fs.existsSync(p) && fs.statSync(p).isFile()) return path.resolve(p);
+    }
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    const md = entries.find((e) => e.isFile() && e.name.endsWith(".md"));
+    return md ? path.resolve(path.join(dir, md.name)) : null;
+  } catch {
+    return null;
+  }
+}
 
 // Gemini CLI approval mode (default, auto_edit, plan)
 export const DEFAULT_GEMINI_APPROVAL_MODE = process.env.DEFAULT_GEMINI_APPROVAL_MODE || "auto_edit";

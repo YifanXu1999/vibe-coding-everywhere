@@ -75,7 +75,7 @@ export function formatToolUseForDisplay(name: string, input: unknown): string {
     case "Bash": {
       const cmd = obj.command != null ? String(obj.command).trim() : "";
       const displayCmd = cmd.length > 120 ? cmd.slice(0, 117) + "..." : cmd;
-      return displayCmd ? `🖥 Running command: \`${displayCmd}\`` : "🖥 Running command";
+      return displayCmd ? `🖥 Running command:\n\`${displayCmd}\`` : "🖥 Running command";
     }
     case "TodoWrite":
       return "📋 Updating tasks";

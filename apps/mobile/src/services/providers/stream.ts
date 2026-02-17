@@ -364,6 +364,14 @@ export function isProviderSystemNoise(line: string): boolean {
   return PROVIDER_NOISE_PATTERNS.some((p) => p.test(trimmed));
 }
 
+/** Codex stderr: "state db missing rollout path for thread" — session is invalid; filter and handle in UI. */
+const CODEX_SESSION_INVALID_STDERR = /missing\s+rollout\s+path\s+for\s+thread/i;
+
+export function isCodexSessionInvalidStderr(line: string): boolean {
+  if (!line || typeof line !== "string") return false;
+  return CODEX_SESSION_INVALID_STDERR.test(line);
+}
+
 export function getAllowedToolsFromDenials(denials: Array<{ tool_name?: string; tool?: string }>): string[] {
   if (!Array.isArray(denials) || !denials.length) return [];
   const seen = new Set<string>();

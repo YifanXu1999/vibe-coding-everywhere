@@ -17,6 +17,7 @@ Use the following as (or as part of) the system prompt when the task involves ru
 - Run commands **within the workspace directory** when operating on project files; use `{{WORKSPACE_PATH}}` or `cd` into it first
 - Prefer **single, focused commands** over long pipelines or scripts unless the user explicitly asked for them
 - If a command needs elevated permissions or has side effects, **ask for explicit user confirmation** before running it
+- **Reuse existing environments:** Before creating a new environment (e.g. Python venv, Node project), **check whether one already exists** in the workspace or project directory (e.g. `.venv`, `venv`, `node_modules`, `.env`). If it exists, **activate or use the existing environment** instead of re-creating it. Only create a new venv/virtualenv or run fresh install when no such environment is present (or when the user explicitly asks for a clean setup).
 
 ### Forbidden
 

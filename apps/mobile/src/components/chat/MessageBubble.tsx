@@ -14,6 +14,53 @@ function getFileName(path: string): string {
 
 const BASH_LANGUAGES = new Set(["bash", "sh", "shell", "zsh"]);
 
+/** Lines that are prose/headings, not runnable shell commands. Full command chain must be pure commands only. */
+const NON_COMMAND_LINE_REGEX =
+  /^\s*(#{2,}\s+.*|\*\*[^*]*\*\*\s*$|Command\s+execution\s+summary\s*$|Full\s+command\s+chain\s*\(.*\)\s*$|Terminal\s+\d+:\s*.*)$/i;
+
+/** True if the trimmed line looks like prose (e.g. ends with period). Shell commands are not sentences. */
+function looksLikeProse(trimmed: string): boolean {
+  if (!trimmed) return false;
+  return trimmed.endsWith(".");
+}
+
+/** Match "Terminal N: ..." section headers that must not appear inside a code block (log has one; UI must not show twice). */
+const TERMINAL_HEADER_LINE_REGEX = /^\s*Terminal\s+\d+:\s*.+$/i;
+
+/** Remove trailing lines that are "Terminal N: ..." from code block content so they are only shown as markdown, not inside the block. */
+function stripTrailingTerminalHeaderLines(content: string): string {
+  const lines = content.split(/\r?\n/);
+  let last = lines.length;
+  while (last > 0 && TERMINAL_HEADER_LINE_REGEX.test(lines[last - 1]?.trim() ?? "")) last--;
+  return lines.slice(0, last).join("\n").trimEnd();
+}
+
+/**
+ * Extract runnable command only from a bash code block that may contain mixed content
+ * (headings, "Command execution summary", or build-output prose). Ensures the full command chain
+ * passed to the shell is pure commands only to avoid e.g. zsh "unmatched `" from prose with backticks.
+ */
+export function extractBashCommandOnly(raw: string): string {
+  const lines = raw.split(/\r?\n/);
+  const commandLines: string[] = [];
+  let started = false;
+  for (const line of lines) {
+    const t = line.trim();
+    if (!t) {
+      if (started) commandLines.push(line);
+      continue;
+    }
+    const isNonCommand = NON_COMMAND_LINE_REGEX.test(t) || looksLikeProse(t);
+    if (!started) {
+      if (!isNonCommand) started = true;
+      else continue;
+    }
+    if (isNonCommand) break;
+    commandLines.push(line);
+  }
+  return commandLines.join("\n").trim();
+}
+
 /**
  * Match http/https URLs (exclude trailing punctuation; allow dots in path e.g. .html, and : for port e.g. :5174).
  * Renders according to output-enhancement prompt: prompts/output-enhancement/url.txt
@@ -260,18 +307,22 @@ export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailB
         const handleRunPress = () => {
           const trimmed = String(content).trim();
           if (!trimmed) return;
+          const command = extractBashCommandOnly(trimmed) || trimmed;
           Alert.alert(
             "Run command",
             "Open a new terminal and run this command?",
             [
               { text: "Cancel", style: "cancel" },
-              { text: "Run", onPress: () => onRunBashCommand(trimmed) },
+              { text: "Run", onPress: () => onRunBashCommand(command) },
             ]
           );
         };
+        const displayContent = isBash
+          ? (extractBashCommandOnly(content) || content)
+          : stripTrailingTerminalHeaderLines(content);
         const codeBlock = (
           <Text key={node.key} style={[inheritedStyles, mdStyles.fence ?? markdownStyles.fence]}>
-            {content}
+            {displayContent}
           </Text>
         );
         if (isBash) {

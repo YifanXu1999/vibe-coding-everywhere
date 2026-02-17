@@ -194,13 +194,21 @@ function createRunRenderManager(socket) {
     if (port) runRenderPortByTerminalId.set(terminalId, port);
     
     try {
-      // Spawn command in shell
-      const child = spawn(cmd, {
-        shell: true,
-        cwd: getWorkspaceCwd(),
-        stdio: ["pipe", "pipe", "pipe"],
-        detached: process.platform !== "win32",
-      });
+      const cwd = getWorkspaceCwd();
+      const isWin = process.platform === "win32";
+      // Use login shell on Unix so PATH (e.g. python, node) matches the user's environment
+      const child = isWin
+        ? spawn(cmd, {
+            shell: true,
+            cwd,
+            stdio: ["pipe", "pipe", "pipe"],
+          })
+        : spawn(process.env.SHELL || "/bin/zsh", ["-l", "-c", cmd], {
+            cwd,
+            stdio: ["pipe", "pipe", "pipe"],
+            env: { ...process.env, TERM: "xterm-256color" },
+            detached: true,
+          });
       
       // Track the process
       runRenderTerminals.set(terminalId, child);

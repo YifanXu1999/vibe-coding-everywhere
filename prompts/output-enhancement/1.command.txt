@@ -1,43 +1,98 @@
 ## Instruction: Command execution output
 
-When the task involves running commands (shell, scripts, servers, builds, etc.), follow these rules for output and structure.
+### Step 0: Classify the task BEFORE writing your response
 
-### 1. Full command chain at the end
+Decide which category applies:
+
+**A) File-edit-only task** -- you only read, wrote, or edited files using internal tools (e.g. apply_patch, file_change, or helper commands like `cat`/`pwd`/`ls` that you used to inspect files before editing).
+
+- Output a **brief summary** of what was changed (e.g. "Updated `abc.txt` by appending 'nice'.") and **STOP**.
+- **Do NOT output any of the following:** "Command execution summary", "Full command chain", bash code blocks, or any commands (including `cd`, `apply_patch`, `pwd`, `ls`, `cat`).
+- The user did not ask to run commands; there is nothing for them to reproduce.
+
+**B) User-facing command task** -- the task requires the user to run commands themselves afterward (start a server, run a build, run tests, execute a script, install dependencies, etc.).
+
+- Follow sections 0-4 below.
+
+**How to tell:** If the only "commands" you executed were internal reads (`cat`, `ls`, `pwd`) and file writes (`apply_patch`, `file_change`), that is category A. Category B is when the task produces commands that the user needs to run in their own terminal to get a result (a running server, a build output, test results, etc.).
+
+**The rules below (sections 0-4) apply ONLY to category B (user-facing command tasks).**
+
+### 0. Command verification — do not present unverified commands as guaranteed
+
+Commands you output may **not** have been run in this session, or may have **failed** when run. Users will copy-paste your "full command chain"; if a step fails (e.g. `pip install` fails building a Rust extension like `pydantic-core`, or `npm install` fails), the user is left with a broken flow.
+
+- **Verify when possible:** If the task involves install/build/run steps, prefer **running** those steps in the session (install deps, build, start server) and only then output the full command chain. The chain you give should reflect what **actually succeeded** (or what you ran), not only what you assumed would work.
+- **If you did not run a command:** Do not present it as guaranteed. In the summary, state clearly which parts were **not executed** (e.g. "The following chain was not fully run in this session; the install step may need adjustment for your environment.").
+- **If a command failed when you ran it:** Do **not** put the failed command in the final "full command chain" as if it works. Either:
+  - Fix the approach (e.g. suggest a different Python version, use a pre-built wheel, add Rust toolchain, or an alternative command) and then output the corrected chain, or
+  - Output the chain but **explicitly mark** the failing step and add a short "If this fails" note (e.g. "If `pip install ...` fails with a maturin/Rust build error, install Rust or use a Python version with pre-built wheels.").
+- **Interpret common failures:** Errors often come from subprocesses (e.g. "This error originates from a subprocess, and is likely not a problem with pip"). When you see build failures (maturin, Cargo, node-gyp, etc.), mention environment requirements (Rust toolchain, C++ compiler, Node version) or alternatives (pre-built wheels, different Python/Node version) in the summary, not only "run the commands again."
+
+This keeps the full command chain trustworthy and helps the user when their environment differs from what you assumed.
+
+### 1. Process lifetime -- do not say "now" or "will be" serving/rendering
+
+The process that executes your commands (Claude/Codex/Gemini) is **terminated after the chat**. Any server or preview you start will not keep running. Therefore:
+
+- **Do not** say that a server or page is "now" serving, "now" running, or "now" rendering.
+- **Do not** say that it "will be" served/rendered after the user runs the commands.
+- **Do** provide the full command chain (and optional stop command, e.g. `pkill -f "..."`) so the user can run it themselves; use neutral wording such as "Run the following commands:" or "To start the server, use:" and then give the URL.
+
+Example: say "Run the following commands. The page is available at: [URL]" (then give the commands). Do not say "The page is now being served" or "The page will be served once you run the following commands."
+
+### 2. Full command chain at the end
 
 After all command execution is done, output a **full chain of commands** that would reproduce the same result, as if starting from a **fresh terminal at the workspace root**.
 
 - Assume the user opens a new terminal at the workspace root.
-- List every command in order, including:
+- **The full command chain is the single source of truth.** It must include **every** command the user needs to run, including:
   - `cd` to any subdirectory used
   - Environment setup (e.g. `export`, `source`, `npx`, `npm run`)
-  - The actual commands (run, build, test, serve, etc.)
+  - Install commands (e.g. `npm install`)
+  - Build commands (e.g. `npm run build`)
+  - **Server / preview / dev commands** (e.g. `npm run dev`, `npm run preview`, `npm start`). If the task goal is to view a page or start a server, the command that starts that server **must** be in the full chain — do not put it only in the summary.
+- **Do NOT scatter runnable commands across the response.** Any bash code block with commands that the user needs to run **must** appear inside the full command chain section, not only in the summary above it. The summary may describe what happens, but the full command chain is where all runnable commands live.
+- **Exclude** internal/tool-only actions: `apply_patch`, `cat` (for reading), `pwd`, `ls` (for inspecting). These are not user commands.
 - Do not include one-off or exploratory commands that were not required for the task.
-- Use a single, copy-pasteable block so the user can re-run the full flow.
+- **Full chain = pure commands only:** The block must contain **only** runnable shell commands (and `#` comments). Do not include build output, warnings, or explanatory sentences inside the block—put those in the summary text above.
+- **Runnable as pasted:** The block must work when the user paste-and-runs the entire block in one go. Use `&&` to chain any steps that depend on the same shell (e.g. `nvm use X` must apply to the next `npm` commands). If using `nvm`, either: (1) chain in one line so the same shell is used, e.g. `source ~/.nvm/nvm.sh 2>/dev/null; nvm use 22.12.0 && cd app && npm install && npm run dev`, or (2) use an explicit Node path so the block does not rely on `nvm` being loaded. Do not output a multi-line block where a line like `nvm use 22.12.0` is followed by separate lines for `npm install` / `npm run dev`—that often fails when pasted because the version switch does not apply to the next lines.
+- **Reuse existing environments in the chain:** Do not unconditionally create a new environment when one may already exist. For **Python**: only create a venv if none exists (e.g. `[ -d .venv ] || python3 -m venv .venv`, then `source .venv/bin/activate`). For **Node**: run `npm install` (or equivalent) in the project directory without removing or re-creating `node_modules` unless the user asked for a clean install. In the summary, you can note "Uses existing .venv if present, otherwise creates one." This keeps the chain idempotent and avoids overwriting or duplicating the user's existing setup.
 
-### 2. Consistent output format
+### 3. Consistent output format
 
-Use this structure every time the task involves commands:
+Use this structure for user-facing command tasks:
 
 #### **Command execution summary**
 
-[Brief description of what was run and why.]
+[Brief description of what was run and why. Do NOT put any ```bash code blocks here — all runnable commands belong in the full chain below.]
 
 **Full command chain (from workspace root)**
 
-Terminal 1: [role, e.g. "Backend server" or "Main / one-off commands"]
+Terminal 1: [role, e.g. "Dev server" or "Build & serve"]
 
 ```bash
 cd /path/from/workspace/root
 # optional: export VAR=value
-command1
-command2
+npm install
+npm run build
+npm run dev -- --host 0.0.0.0 --port 5173
 ```
 
-### 3. Multiple terminals (backend, frontend, etc.)
+- **All commands in the chain:** Every command the user needs — install, build, **and** start/serve/preview — must be listed here. Do not put some commands in the summary and others in the chain.
+- **Pure commands only in the code block:** The content inside the ```bash block must be **only** runnable shell commands (and optional comments starting with #). The full command chain is pasted and run as-is by the user; it must be **pure commands only**. Do **not** put inside the block: "Command execution summary", headings (#### ...), prose, build output (e.g. "successfully rendered...", "Vite emitted..."), or any explanatory sentence. If you mention build results or next steps, put them in the summary text **above** the block, not inside it.
+
+If the chain needs a specific Node version (e.g. nvm), make it one runnable line so the version applies to all later commands:
+
+```bash
+source ~/.nvm/nvm.sh 2>/dev/null; nvm use 22.12.0 && cd /path/from/workspace/root && npm install && npm run dev -- --host 0.0.0.0 --port 5173
+```
+
+### 4. Multiple terminals (backend, frontend, etc.)
 
 When the task needs **more than one terminal** (e.g. backend server + frontend dev server):
 
-- **Number terminals by role**: Terminal 1, Terminal 2, …
+- **Number terminals by role**: Terminal 1, Terminal 2, ...
 - **Label each** with its role in the header, e.g.:
   - "Terminal 1: Backend API"
   - "Terminal 2: Frontend dev server"
@@ -48,7 +103,7 @@ When the task needs **more than one terminal** (e.g. backend server + frontend d
   - All commands that must run in that terminal, in order
 - In the summary, state that multiple terminals are required and what each is for.
 
-***Example for backend + frontend:***
+Example for backend + frontend:
 
 Terminal 1: Backend server
 

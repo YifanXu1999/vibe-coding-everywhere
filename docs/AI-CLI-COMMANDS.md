@@ -155,7 +155,29 @@ gemini --output-format stream-json --approval-mode auto_edit -p "Refactor this f
 | `--json` | 输出 JSONL 事件（便于解析） |
 | `-p <prompt>` 或末尾 prompt | 用户提示词（必填） |
 
-可选：`--model`、`--ask-for-approval`、`--full-auto`、`--yolo`、`--skip-git-repo-check`。
+可选：`--model`、`--profile`、`--ask-for-approval`、`--full-auto`、`--yolo`、`--skip-git-repo-check`。
+
+#### 系统提示（System prompt）— 使用 Profile
+
+Codex **app-server** 路径下，系统提示通过 **thread/start 的 baseInstructions** 注入（与 Claude 同源：`prompts/` 合并后的 `getChatSystemPrompt()`），不再使用 `profile/instructions.md` 或 `model_instructions_file`。
+
+| 条件 | 行为 |
+|------|------|
+| 使用 Codex app-server（当前默认） | 服务端在 `thread/start` 时传入 `baseInstructions: getChatSystemPrompt()`，无需 profile 文件。 |
+| 设置环境变量 `CODEX_PROFILE` | 若使用 `codex exec` 等需 profile 的路径，服务端添加 `--profile <name>`，从 `~/.codex/config.toml` 的 `[profiles.<name>]` 加载配置。 |
+
+**编辑 system prompt：** 直接修改 `prompts/` 下内容（如 `output-enhancement/1.command.txt`），重启服务即可。无需创建或维护 `profile/instructions.md`。
+
+**使用全局 profile（`~/.codex/config.toml`）示例（仅当使用 `codex exec` 等需 profile 时）：**
+
+```toml
+[profiles.vibe-coding]
+model_instructions_file = "/path/to/your/instructions.md"
+# 或使用 developer_instructions 直接写字符串：
+# developer_instructions = "You are a coding assistant for this workspace. ..."
+```
+
+然后在 `.env` 或环境中设置 `CODEX_PROFILE=vibe-coding`，重启服务后 Codex 会使用该 profile 加载 system prompt。
 
 ### 续写（Resume）
 
@@ -211,8 +233,8 @@ codex exec resume --last --json -p "Continue"
   `permissionMode`、`allowedTools`、`useContinue`、`systemPrompt`（来自 `getChatSystemPrompt()`）。
 - **Gemini：**  
   `approvalMode`、`useContinue`（续写时加 `--resume`）；无 `permissionMode` / `allowedTools` / `systemPrompt`。
-- **Codex：**  
-  `useContinue`、`sessionId`（来自首轮 JSONL 的 `thread.started.thread_id`）；续写时 `codex exec resume <session_id> --json`，无 sessionId 时回退 `resume --last`。可选 `askForApproval`、`fullAuto`、`yolo`、`model`、`skipGitRepoCheck`。
+- **Codex（app-server）：**  
+  `useContinue`、`sessionId`（来自 `thread.started.thread_id`）；`thread/start` 时传入 `baseInstructions: getChatSystemPrompt()` 注入 system prompt（与 Claude 同源，来自 `prompts/`）。可选 `codexProfile`（来自 `CODEX_PROFILE`）、`askForApproval`、`fullAuto`、`yolo`、`model`、`skipGitRepoCheck`。
 
 ### 环境变量与默认值（server/config/index.js）
 
@@ -221,6 +243,7 @@ codex exec resume --last --json -p "Continue"
 | `DEFAULT_PERMISSION_MODE` | Claude 默认权限模式 | `bypassPermissions` |
 | `DEFAULT_GEMINI_APPROVAL_MODE` | Gemini 默认审批模式 | `auto_edit` |
 | `DEFAULT_PROVIDER` | 未指定时的 AI 提供方 | `gemini` |
+| `CODEX_PROFILE` | Codex 使用的 profile 名（对应 `~/.codex/config.toml` 中 `[profiles.<name>]`）；app-server 下 system prompt 通过 `baseInstructions` 注入，不依赖此变量 | 空 |
 
 ---
 
@@ -231,6 +254,6 @@ codex exec resume --last --json -p "Continue"
 | 首次发送一条 prompt | `-p "..."` + 可选 `--permission-mode`、`--allowedTools`、`--system-prompt` | `-p "..."` + 可选 `--approval-mode` | `codex exec --json ... -p "..."`，可选 `--model`、`--ask-for-approval`、`--full-auto`、`--yolo` |
 | 同会话内再次发送（续写） | 加上 `-c`，其余同上 | 先结束当前进程，再以 `--resume` + `-p "..."` 启动新进程 | 先结束当前进程，再以 `codex exec resume <thread_id> --json ... -p "..."` 启动；无 thread_id 时用 `resume --last` |
 | 权限/审批 | 使用新的 `permissionMode` / `allowedTools` 重试 | 不涉及 permission/allowedTools | 使用 `askForApproval` / `fullAuto` / `yolo` |
-| 更换 workspace 或系统提示 | 仅 Claude：重启会话后更新 `--system-prompt` | 不涉及系统提示 | 不涉及系统提示 |
+| 更换 workspace 或系统提示 | 仅 Claude：重启会话后更新 `--system-prompt` | 不涉及系统提示 | 仅通过 profile：`CODEX_PROFILE` 或 `<workspace>/profile/`；不将 system prompt 拼入 query |
 
 以上即本项目中 Claude、Gemini 与 Codex 命令的输入方式、flags/options 与不同场景的对应关系。

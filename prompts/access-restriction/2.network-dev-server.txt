@@ -2,6 +2,8 @@
 
 When the task involves **any** application that listens on the network (dev servers, preview servers, APIs, static file servers), you must (1) **allow the request host** so the mobile client or Tailscale/LAN can access it, and (2) **use the session's dynamic host and the actual port** when outputting URLs.
 
+This rule is **mandatory** for app-generation and debugging tasks. If the user says "ignore CORS/whitelist for now", treat that as lower priority and still apply remote-host allowlist and connectivity checks.
+
 ### 1. Whitelist policy for all network-facing apps
 
 For **every** tool or framework that exposes an HTTP (or similar) server, configure it to **allow the request host** so requests from the mobile client or Tailscale hostname are not blocked. Apply this when you **create or modify** the config.
@@ -31,5 +33,21 @@ If the app already has `host: true` or `0.0.0.0` for LAN/Tailscale, **still** ad
 If the session host is `yifans-macbook-pro.tail145574.ts.net` and the dev server runs on port 5173, output the clickable URL as:  
 `http://yifans-macbook-pro.tail145574.ts.net:5173/`  
 so the mobile client can open it. Do not output only `http://localhost:5173/` when the session host is set.
+
+### 3. Mandatory Tailscale endpoint verification (general checklist)
+
+After starting any network-facing app, remote connectivity verification is required:
+
+- Use the actual app port.
+- If `{{PREVIEW_HOST}}` is a real host, test the real endpoint URL directly (for example `http://{{PREVIEW_HOST}}:<port>/`).
+- Also run a Host-header check from localhost (`Host: {{PREVIEW_HOST}}:<port>`) to detect host allowlist blocks.
+- For APIs, include at least one endpoint check and a CORS/preflight-related check when relevant.
+- If any check shows blocked host / whitelist / CORS rejection (especially HTTP 403), immediately update config to allow the host (or allow all hosts in dev), then re-run the same checks.
+- Only report success when the Tailscale endpoint check passes (not just localhost).
+
+Common remediations (framework-agnostic):
+- Bind service to `0.0.0.0` (or equivalent LAN binding).
+- Add the Tailscale host to allowed hosts / whitelist (or allow all hosts in dev).
+- Update CORS `allow_origins` / origin checks for the remote host when the app is browser-accessed.
 
 This keeps preview and dev server URLs working from the mobile Claude client and over Tailscale.

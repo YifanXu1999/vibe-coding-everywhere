@@ -52,6 +52,7 @@ import {
   getDefaultServerConfig,
   createWorkspaceFileService,
   getTerminalInputState,
+  type PendingAskUserQuestion,
 } from "./src/core";
 
 // Component Imports
@@ -205,8 +206,8 @@ function HeaderButton({ icon, onPress, accessibilityLabel, delay = 0 }: HeaderBu
 
 export default function App() {
   // Theme and Provider State
-  const [provider, setProvider] = useState<BrandProvider>("gemini");
-  const [model, setModel] = useState(DEFAULT_GEMINI_MODEL);
+  const [provider, setProvider] = useState<BrandProvider>("codex");
+  const [model, setModel] = useState(DEFAULT_CODEX_MODEL);
   const theme = useMemo(() => getTheme(provider, "light"), [provider]);
   const styles = useMemo(() => createAppStyles(theme), [theme]);
 
@@ -235,7 +236,9 @@ export default function App() {
   (process.env?.EXPO_PUBLIC_DEFAULT_PERMISSION_MODE === "acceptEdits" ||
     process.env?.EXPO_PUBLIC_DEFAULT_PERMISSION_MODE === "acceptPermissions")
       ? "always_ask"
-      : "yolo";
+      : provider === "codex"
+        ? "always_ask"
+        : "yolo";
   
   const [permissionModeUI, setPermissionModeUI] = useState<PermissionModeUI>(defaultPermissionModeUI);
 
@@ -256,6 +259,7 @@ export default function App() {
   const [fileLoading, setFileLoading] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
   const [pendingCodeRefs, setPendingCodeRefs] = useState<CodeRefPayload[]>([]);
+  const [pendingRunApprovalCommand, setPendingRunApprovalCommand] = useState<string | null>(null);
 
   // Terminal State
   const [terminalCommandInput, setTerminalCommandInput] = useState("");
@@ -430,17 +434,22 @@ export default function App() {
               yolo: backend.yolo,
             }
           : undefined;
-      submitPrompt(
-        prompt,
-        backend.permissionMode,
-        undefined,
-        pendingCodeRefs.length ? pendingCodeRefs : undefined,
-        backend.approvalMode,
-        codexOptions
-      );
-      if (pendingCodeRefs.length) setPendingCodeRefs([]);
-      setSidebarVisible(false);
-      handleCloseFileViewer();
+
+      const doSubmit = () => {
+        submitPrompt(
+          prompt,
+          backend.permissionMode,
+          undefined,
+          pendingCodeRefs.length ? pendingCodeRefs : undefined,
+          backend.approvalMode,
+          codexOptions
+        );
+        if (pendingCodeRefs.length) setPendingCodeRefs([]);
+        setSidebarVisible(false);
+        handleCloseFileViewer();
+      };
+
+      doSubmit();
     },
     [submitPrompt, permissionModeUI, provider, pendingCodeRefs, handleCloseFileViewer]
   );
@@ -448,6 +457,72 @@ export default function App() {
   const handleOpenPreviewInApp = useCallback((u: string) => {
     if (u) setPreviewUrl(serverConfig.resolvePreviewUrl(u));
   }, [serverConfig]);
+
+  /** When always_ask + Codex, show approval before running command from Run button (run-render-command path). */
+  const handleRunCommandWithApproval = useCallback(
+    (command: string) => {
+      const backend = getBackendPermissionMode(permissionModeUI, provider);
+      const needsApproval = provider === "codex" && backend.askForApproval === "untrusted";
+      if (needsApproval) {
+        setPendingRunApprovalCommand(command);
+      } else {
+        runCommandInNewTerminal(command);
+      }
+    },
+    [permissionModeUI, provider, runCommandInNewTerminal]
+  );
+
+  const pendingLocalRunApproval = useMemo<PendingAskUserQuestion | null>(() => {
+    if (!pendingRunApprovalCommand) return null;
+    return {
+      tool_use_id: "local-run-command-approval",
+      questions: [
+        {
+          header: "Command approval",
+          question: `Allow running this command?\n${pendingRunApprovalCommand}`,
+          options: [
+            { label: "Approve", description: "Run this command in a new terminal." },
+            { label: "Deny", description: "Do not run this command." },
+          ],
+          multiSelect: false,
+        },
+      ],
+    };
+  }, [pendingRunApprovalCommand]);
+
+  const activePendingAskQuestion = pendingAskQuestion ?? pendingLocalRunApproval;
+
+  useEffect(() => {
+    if (pendingAskQuestion && pendingRunApprovalCommand) {
+      setPendingRunApprovalCommand(null);
+    }
+  }, [pendingAskQuestion, pendingRunApprovalCommand]);
+
+  const handleAskQuestionSubmit = useCallback(
+    (answers: Array<{ header: string; selected: string[] }>) => {
+      if (pendingAskQuestion) {
+        submitAskQuestionAnswer(answers);
+        return;
+      }
+      if (!pendingRunApprovalCommand) return;
+      const selected = answers.flatMap((a) => (Array.isArray(a.selected) ? a.selected : []));
+      const normalized = selected.map((s) => String(s).trim().toLowerCase());
+      const approved = normalized.some((s) => s === "approve" || s === "accept" || s === "allow");
+      if (approved) {
+        runCommandInNewTerminal(pendingRunApprovalCommand);
+      }
+      setPendingRunApprovalCommand(null);
+    },
+    [pendingAskQuestion, pendingRunApprovalCommand, submitAskQuestionAnswer, runCommandInNewTerminal]
+  );
+
+  const handleAskQuestionCancel = useCallback(() => {
+    if (pendingAskQuestion) {
+      dismissAskQuestion();
+      return;
+    }
+    setPendingRunApprovalCommand(null);
+  }, [pendingAskQuestion, dismissAskQuestion]);
 
   const handleClosePreview = useCallback(() => {
     setPreviewUrl(null);
@@ -566,7 +641,7 @@ export default function App() {
                         showAsTailBox={showTailBox}
                         tailBoxMaxHeight={Dimensions.get("window").height * 0.5}
                         provider={provider}
-                        onRunBashCommand={runCommandInNewTerminal}
+                        onRunBashCommand={handleRunCommandWithApproval}
                         onOpenUrl={handleOpenPreviewInApp}
                         onFileSelect={handleFileSelectFromChat}
                       />
@@ -654,9 +729,9 @@ export default function App() {
 
           {/* Ask Question Modal */}
           <AskQuestionModal
-            pending={pendingAskQuestion}
-            onSubmit={submitAskQuestionAnswer}
-            onCancel={dismissAskQuestion}
+            pending={activePendingAskQuestion}
+            onSubmit={handleAskQuestionSubmit}
+            onCancel={handleAskQuestionCancel}
           />
 
           {/* Settings Modal */}
@@ -804,11 +879,19 @@ export default function App() {
                       }}
                     />
 
-                    {/* Terminal Output */}
+                    {/* Terminal Output: show selected terminal's lines so each process has its own output */}
                     <View style={styles.fullScreenTerminalOutputWrap}>
                       <RunOutputView
-                        lines={runOutputLines}
-                        command={runCommand}
+                        lines={
+                          selectedTerminalId
+                            ? (terminals.find((t) => t.id === selectedTerminalId)?.lines ?? [])
+                            : runOutputLines
+                        }
+                        command={
+                          selectedTerminalId
+                            ? (terminals.find((t) => t.id === selectedTerminalId)?.lastCommand ?? null)
+                            : runCommand
+                        }
                         title="Output"
                         showWhenEmpty
                         flexOutput
@@ -941,11 +1024,12 @@ function createAppStyles(theme: ReturnType<typeof getTheme>) {
       minHeight: 40,
     },
     sessionIdText: {
-      fontSize: 11,
-      fontWeight: "500",
-      letterSpacing: 0.3,
+      fontSize: 12,
+      fontWeight: "400",
+      letterSpacing: 0.2,
+      lineHeight: 16,
       textAlign: "center",
-      color: "#1f2937",
+      color: theme.colors.textMuted,
     },
     menuButtonOverlay: {
       position: "absolute",
