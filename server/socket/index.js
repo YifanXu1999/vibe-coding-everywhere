@@ -105,6 +105,9 @@ function createRunRenderManager(socket) {
       runRenderTerminals.set(terminalId, child);
       globalSpawnChildren.add(child);
       
+      // Notify client first so terminal exists before any stdout/stderr (avoids dropped chunks on client)
+      socket.emit("run-render-started", { terminalId, pid: child.pid ?? null });
+      
       // Set up output encoding
       child.stdout?.setEncoding("utf8");
       child.stderr?.setEncoding("utf8");
@@ -133,9 +136,6 @@ function createRunRenderManager(socket) {
         socket.emit("run-render-stderr", { terminalId, chunk: `[error] ${err.message}\n` });
         socket.emit("run-render-exit", { terminalId, code: 1, signal: null });
       });
-      
-      // Notify client that terminal is ready
-      socket.emit("run-render-started", { terminalId, pid: child.pid ?? null });
     } catch (err) {
       socket.emit("run-render-result", { ok: false, error: err.message || "Failed to create terminal." });
     }
@@ -202,11 +202,12 @@ function createRunRenderManager(socket) {
             shell: true,
             cwd,
             stdio: ["pipe", "pipe", "pipe"],
+            env: { ...process.env, PYTHONUNBUFFERED: "1" },
           })
         : spawn(process.env.SHELL || "/bin/zsh", ["-l", "-c", cmd], {
             cwd,
             stdio: ["pipe", "pipe", "pipe"],
-            env: { ...process.env, TERM: "xterm-256color" },
+            env: { ...process.env, TERM: "xterm-256color", PYTHONUNBUFFERED: "1" },
             detached: true,
           });
       
@@ -219,6 +220,10 @@ function createRunRenderManager(socket) {
         child.stdin.on("error", () => {});
       }
       
+      // Notify client first so terminal exists before any stdout/stderr (avoids dropped chunks on client)
+      socket.emit("run-render-started", { terminalId, pid: child.pid ?? null, command: cmd });
+      socket.emit("run-render-result", { ok: true, url: url || "", terminalId });
+
       // Set up output encoding
       child.stdout?.setEncoding("utf8");
       child.stderr?.setEncoding("utf8");
@@ -249,10 +254,6 @@ function createRunRenderManager(socket) {
         socket.emit("run-render-stderr", { terminalId, chunk: `[error] ${err.message}\n` });
         socket.emit("run-render-result", { ok: false, error: err.message || "Failed to run command.", terminalId });
       });
-      
-      // Notify client of success
-      socket.emit("run-render-started", { terminalId, pid: child.pid ?? null });
-      socket.emit("run-render-result", { ok: true, url: url || "", terminalId });
     } catch (err) {
       socket.emit("run-render-result", { ok: false, error: err.message || "Failed to run command." });
     }

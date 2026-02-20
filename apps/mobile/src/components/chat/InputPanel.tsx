@@ -9,6 +9,7 @@ import {
   Platform,
   Modal,
   ScrollView,
+  Keyboard,
 } from "react-native";
 import { GeminiIcon, ClaudeIcon, CodexIcon, GeminiSendIcon, ClaudeSendIcon, CodexSendIcon } from "../icons/ProviderIcons";
 import {
@@ -101,6 +102,7 @@ export function InputPanel({
   const handleSubmit = useCallback(() => {
     const trimmed = prompt.trim();
     if (!trimmed && !pendingCodeRefs.length) return;
+    Keyboard.dismiss();
     if (waitingForUserInput && claudeRunning) {
       onSubmit(trimmed, permissionMode ?? undefined);
       setPrompt("");
@@ -115,8 +117,8 @@ export function InputPanel({
 
   return (
     <KeyboardAvoidingView
-      behavior={Platform?.OS === "ios" ? "padding" : undefined}
-      keyboardVerticalOffset={Platform?.OS === "ios" ? 90 : 0}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
     >
       <View style={styles.container}>
         {pendingCodeRefs.length > 0 && (
@@ -147,9 +149,16 @@ export function InputPanel({
             value={prompt}
             onChangeText={setPrompt}
             editable={!disabled}
-            multiline={false}
+            multiline
+            maxLength={8000}
+            blurOnSubmit={false}
             onSubmitEditing={handleSubmit}
-            returnKeyType="send"
+            returnKeyType="default"
+            autoCapitalize="sentences"
+            autoCorrect
+            autoComplete="off"
+            textAlignVertical={Platform.OS === "android" ? "top" : "center"}
+            scrollEnabled
           />
           <View style={[styles.statusDot, connected && styles.statusDotConnected]} />
         </View>
@@ -203,24 +212,26 @@ export function InputPanel({
               <Text style={styles.btnTerminateAgentText}>Stop</Text>
             </TouchableOpacity>
           )}
-          <TouchableOpacity
-            style={[
-              styles.btnSend,
-              (provider === "gemini" || provider === "codex") ? styles.btnSendLight : styles.btnSendDark,
-              disabled && styles.btnSendDisabled,
-            ]}
-            onPress={handleSubmit}
-            disabled={disabled}
-            activeOpacity={0.8}
-          >
-            {provider === "gemini" ? (
-              <GeminiSendIcon size={20} color={theme.accent} />
-            ) : provider === "codex" ? (
-              <CodexSendIcon size={20} color={theme.accent} />
-            ) : (
-              <ClaudeSendIcon size={20} color={theme.accent} />
-            )}
-          </TouchableOpacity>
+          {!(claudeRunning && !waitingForUserInput) && (
+            <TouchableOpacity
+              style={[
+                styles.btnSend,
+                (provider === "gemini" || provider === "codex") ? styles.btnSendLight : styles.btnSendDark,
+                disabled && styles.btnSendDisabled,
+              ]}
+              onPress={handleSubmit}
+              disabled={disabled}
+              activeOpacity={0.8}
+            >
+              {provider === "gemini" ? (
+                <GeminiSendIcon size={20} color={theme.accent} />
+              ) : provider === "codex" ? (
+                <CodexSendIcon size={20} color={theme.accent} />
+              ) : (
+                <ClaudeSendIcon size={20} color={theme.accent} />
+              )}
+            </TouchableOpacity>
+          )}
         </View>
       </View>
 
@@ -304,15 +315,20 @@ function createInputPanelStyles(theme: ReturnType<typeof useTheme>) {
   },
   topRow: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-end",
     gap: 10,
-    minHeight: 28,
+    minHeight: 44,
   },
   input: {
     flex: 1,
     fontSize: 16,
     color: theme.textPrimary,
-    padding: 0,
+    paddingTop: 10,
+    paddingBottom: 10,
+    paddingLeft: 0,
+    paddingRight: 0,
+    maxHeight: 120,
+    minHeight: 24,
   },
   statusDot: {
     width: 8,

@@ -6,6 +6,8 @@ import {
   ScrollView,
   Platform,
   TouchableOpacity,
+  Animated,
+  ActivityIndicator,
 } from "react-native";
 import { useTheme } from "../../theme/index";
 
@@ -29,6 +31,8 @@ interface RunOutputViewProps {
   showCommand?: boolean;
   /** When provided, URLs in output are shown as underlined links and open in the app's internal browser. */
   onOpenUrl?: (url: string) => void;
+  /** When true, a command is currently executing; shows a loading effect on the command line and empty state. */
+  isExecuting?: boolean;
 }
 
 /** Strip ANSI escape sequences for display. */
@@ -70,9 +74,35 @@ export function RunOutputView({
   flexOutput,
   showCommand = true,
   onOpenUrl,
+  isExecuting = false,
 }: RunOutputViewProps) {
   const theme = useTheme();
   const scrollRef = useRef<ScrollView>(null);
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    if (!isExecuting) {
+      pulseAnim.setValue(1);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 0.88,
+          duration: 700,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 700,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [isExecuting, pulseAnim]);
+
   const styles = useMemo(
     () =>
       StyleSheet.create({
@@ -139,6 +169,17 @@ export function RunOutputView({
         link: { textDecorationLine: "underline" as const, color: theme.accent },
         emptyPlaceholder: { justifyContent: "center", padding: 16 },
         emptyPlaceholderText: { fontSize: 13, color: theme.textMuted, textAlign: "center" as const },
+        executingRow: {
+          flexDirection: "row" as const,
+          alignItems: "center",
+          gap: 8,
+          paddingVertical: 2,
+          paddingHorizontal: 4,
+          marginHorizontal: -4,
+          borderRadius: 6,
+          backgroundColor: theme.accentLight ?? theme.accent + "22",
+        },
+        executingSpinner: { marginRight: 4 },
       }),
     [theme]
   );
@@ -189,7 +230,18 @@ export function RunOutputView({
       </View>
       {isEmpty ? (
         <View style={emptyStyle}>
-          <Text style={styles.emptyPlaceholderText}>Run command to see output</Text>
+          {command && isExecuting ? (
+            <View style={styles.executingRow}>
+              <ActivityIndicator size="small" color={theme.accent} style={styles.executingSpinner} />
+              <Text style={styles.emptyPlaceholderText}>Running command…</Text>
+            </View>
+          ) : (
+            <Text style={styles.emptyPlaceholderText}>
+              {command
+                ? "Waiting for output…"
+                : "Tap Run on a code block in the chat, or type a command below to see output here."}
+            </Text>
+          )}
         </View>
       ) : (
         <ScrollView
@@ -205,30 +257,44 @@ export function RunOutputView({
             const segments = segmentLine(plain);
             const hasUrl = segments.some((s) => s.type === "url");
             const lineStyle = [styles.line, line.type === "stderr" ? styles.stderr : styles.stdout];
-            if (hasUrl && onOpenUrl) {
+            const isCommandLine = isExecuting && i === 0 && command != null && command !== "" && line.text.trim().startsWith("$ ");
+            const lineContent = (
+              <>
+                {hasUrl && onOpenUrl ? (
+                  <Text style={lineStyle} selectable>
+                    {segments.map((seg, j) =>
+                      seg.type === "text" ? (
+                        <Text key={j}>{seg.value}</Text>
+                      ) : (
+                        <Text
+                          key={j}
+                          style={styles.link}
+                          onPress={() => onOpenUrl(seg.value)}
+                        >
+                          {seg.value}
+                        </Text>
+                      )
+                    )}
+                  </Text>
+                ) : (
+                  <Text style={lineStyle} selectable>
+                    {plain}
+                  </Text>
+                )}
+              </>
+            );
+            if (isCommandLine) {
               return (
-                <Text key={i} style={lineStyle} selectable>
-                  {segments.map((seg, j) =>
-                    seg.type === "text" ? (
-                      <Text key={j}>{seg.value}</Text>
-                    ) : (
-                      <Text
-                        key={j}
-                        style={styles.link}
-                        onPress={() => onOpenUrl(seg.value)}
-                      >
-                        {seg.value}
-                      </Text>
-                    )
-                  )}
-                </Text>
+                <Animated.View
+                  key={i}
+                  style={[styles.executingRow, { opacity: pulseAnim }]}
+                >
+                  <ActivityIndicator size="small" color={theme.accent} style={styles.executingSpinner} />
+                  <View style={{ flex: 1 }}>{lineContent}</View>
+                </Animated.View>
               );
             }
-            return (
-              <Text key={i} style={lineStyle} selectable>
-                {plain}
-              </Text>
-            );
+            return <View key={i}>{lineContent}</View>;
           })}
         </ScrollView>
       )}

@@ -86,12 +86,13 @@ const GEMINI_MODELS: { value: string; label: string }[] = [
 
 const CODEX_MODELS: { value: string; label: string }[] = [
   { value: "gpt-5-codex", label: "GPT-5 Codex" },
+  { value: "gpt-5.1-codex-mini", label: "GPT-5.1 Codex Mini" },
   { value: "gpt-5.1-codex-max", label: "GPT-5.1 Codex Max" },
 ];
 
 const DEFAULT_CLAUDE_MODEL = "sonnet";
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
-const DEFAULT_CODEX_MODEL = "gpt-5-codex";
+const DEFAULT_CODEX_MODEL = "gpt-5.1-codex-mini";
 
 // Terminal layout constants
 const TERMINAL_CARD_GAP = 12;
@@ -621,6 +622,8 @@ export default function App() {
                   contentContainerStyle={styles.chatMessages}
                   showsVerticalScrollIndicator={false}
                   showsHorizontalScrollIndicator={false}
+                  keyboardDismissMode="on-drag"
+                  keyboardShouldPersistTaps="handled"
                   data={messages}
                   keyExtractor={(item) => item.id}
                   renderItem={({ item, index }) => {
@@ -895,6 +898,11 @@ export default function App() {
                         title="Output"
                         showWhenEmpty
                         flexOutput
+                        isExecuting={
+                          selectedTerminalId
+                            ? (terminals.find((t) => t.id === selectedTerminalId)?.active ?? false)
+                            : runProcessActive
+                        }
                         onTerminate={
                           (selectedTerminalId ?? terminals[terminals.length - 1]?.id)
                             ? () =>

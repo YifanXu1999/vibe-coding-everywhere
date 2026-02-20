@@ -393,7 +393,7 @@ export function createProcessManager(socket, { hasCompletedFirstRunRef, session_
       ? payload.allowedTools.filter((t) => typeof t === "string" && t.trim()).map((t) => t.trim())
       : [];
     const defaultModel =
-      provider === "claude" ? "sonnet" : provider === "codex" ? "gpt-5-codex" : "gemini-2.5-flash";
+      provider === "claude" ? "sonnet" : provider === "codex" ? "gpt-5.1-codex-mini" : "gemini-2.5-flash";
     const model =
       typeof payload?.model === "string" && payload.model.trim()
         ? payload.model.trim()
@@ -463,6 +463,12 @@ export function createProcessManager(socket, { hasCompletedFirstRunRef, session_
     const fullAuto = payload?.fullAuto === true;
     const yolo = payload?.yolo === true;
     const skipGitRepoCheck = payload?.skipGitRepoCheck === true;
+    const effort =
+      typeof payload?.effort === "string" && payload.effort.trim()
+        ? payload.effort.trim()
+        : provider === "codex"
+          ? "medium"
+          : undefined;
 
     const options = {
       model,
@@ -476,6 +482,7 @@ export function createProcessManager(socket, { hasCompletedFirstRunRef, session_
       fullAuto: provider === "codex" ? fullAuto : undefined,
       yolo: provider === "codex" ? yolo : undefined,
       skipGitRepoCheck: provider === "codex" ? skipGitRepoCheck : undefined,
+      effort: provider === "codex" ? effort : undefined,
       codexProfile: provider === "codex" && CODEX_PROFILE ? CODEX_PROFILE : undefined,
       hasCompletedFirstRunRef,
       sessionLogTimestamp: session_management?.session_log_timestamp ?? undefined,

@@ -85,7 +85,7 @@ export function useSocket(options: UseSocketOptions = {}) {
   const serverUrl = serverConfig.getBaseUrl();
   const provider = options.provider ?? "codex";
   const defaultModel =
-    provider === "claude" ? "sonnet" : provider === "codex" ? "gpt-5-codex" : "gemini-2.5-flash";
+    provider === "claude" ? "sonnet" : provider === "codex" ? "gpt-5.1-codex-mini" : "gemini-2.5-flash";
   const model = options.model ?? defaultModel;
 
   // ===== Connection State =====
@@ -372,31 +372,42 @@ export function useSocket(options: UseSocketOptions = {}) {
     });
 
     // Terminal/run-render events
-    socket.on("run-render-started", ({ terminalId, pid }: { terminalId: string; pid: number | null }) => {
-      const cmd = pendingRunCommandRef.current ?? null;
-      const isSingleCommand = lastStartedViaRunCommandRef.current;
-      setTerminals((prev) => [...prev, { id: terminalId, pid, lines: [], active: true, lastCommand: cmd, isSingleCommand }]);
-      setSelectedTerminalId(terminalId); // Show this terminal's output
-      setRunProcessActive(true);
+    socket.on(
+      "run-render-started",
+      ({ terminalId, pid, command: serverCommand }: { terminalId: string; pid: number | null; command?: string }) => {
+        // Prefer command from server so each terminal gets the right command when user runs multiple in quick succession
+        const cmd =
+          ((typeof serverCommand === "string" ? serverCommand.trim() : null) || pendingRunCommandRef.current) ?? null;
+        const isSingleCommand = lastStartedViaRunCommandRef.current;
+        const initialLines =
+          cmd && cmd.trim() !== ""
+            ? [{ type: "stdout" as const, text: `$ ${cmd.trim()}\n` }]
+            : [];
+        setTerminals((prev) => [
+          ...prev,
+          { id: terminalId, pid, lines: initialLines, active: true, lastCommand: cmd, isSingleCommand },
+        ]);
+        setSelectedTerminalId(terminalId);
+        setRunProcessActive(true);
 
-      // Echo the command in the output so the terminal shows "$ command" before stdout/stderr
-      if (cmd && cmd.trim() !== "") {
-        const echoLine = `$ ${cmd.trim()}\n`;
-        setRunOutputLines((prev) => [...prev, { type: "stdout", text: echoLine }]);
-      }
+        if (cmd && cmd.trim() !== "") {
+          const echoLine = `$ ${cmd.trim()}\n`;
+          setRunOutputLines((prev) => [...prev, { type: "stdout", text: echoLine }]);
+        }
 
-      // Only write to stdin when we opened an interactive new terminal (not run-render-command)
-      if (pendingCommandAfterNewTerminalRef.current) {
-        socket.emit("run-render-write", { terminalId, data: pendingCommandAfterNewTerminalRef.current + "\n" });
-        pendingCommandAfterNewTerminalRef.current = null;
+        // Only write to stdin when we opened an interactive new terminal (not run-render-command)
+        if (pendingCommandAfterNewTerminalRef.current) {
+          socket.emit("run-render-write", { terminalId, data: pendingCommandAfterNewTerminalRef.current + "\n" });
+          pendingCommandAfterNewTerminalRef.current = null;
+        }
+        lastStartedViaRunCommandRef.current = false;
       }
-      lastStartedViaRunCommandRef.current = false;
-    });
+    );
 
     socket.on("run-render-stdout", ({ terminalId, chunk }: { terminalId: string; chunk: string }) => {
       const filtered = filterBashNoise(chunk);
       if (!filtered) return;
-      
+
       setTerminals((prev) => {
         const idx = prev.findIndex((t) => t.id === terminalId);
         if (idx === -1) return prev;
@@ -452,7 +463,7 @@ export function useSocket(options: UseSocketOptions = {}) {
    * @param allowedTools - Optional allowed tools list
    * @param codeRefs - Optional code references to include
    * @param approvalMode - Optional Gemini approval mode
-   * @param codexOptions - Optional Codex flags (askForApproval, fullAuto, yolo)
+   * @param codexOptions - Optional Codex flags (askForApproval, fullAuto, yolo, effort)
    */
   const submitPrompt = useCallback(
     (
@@ -461,7 +472,7 @@ export function useSocket(options: UseSocketOptions = {}) {
       allowedTools?: string[],
       codeRefs?: CodeRefPayload[],
       approvalMode?: string,
-      codexOptions?: { askForApproval?: string; fullAuto?: boolean; yolo?: boolean }
+      codexOptions?: { askForApproval?: string; fullAuto?: boolean; yolo?: boolean; effort?: string }
     ) => {
       if (!socketRef.current) return;
 
@@ -481,6 +492,7 @@ export function useSocket(options: UseSocketOptions = {}) {
         provider,
         model,
         approvalMode,
+        ...(provider === "codex" && { effort: codexOptions?.effort ?? "medium" }),
         ...(codexOptions && {
           askForApproval: codexOptions.askForApproval,
           fullAuto: codexOptions.fullAuto,

@@ -198,8 +198,28 @@ function escapeHtml(str) {
     .replace(/'/g, "&#39;");
 }
 
+const PROVIDER_ACCENT = { gemini: "#1a73e8", claude: "#b3541e", codex: "#19c37d" };
+
+function getHighlightColorForProvider(provider) {
+  return PROVIDER_ACCENT[provider] || PROVIDER_ACCENT.gemini;
+}
+
+/** Replace span background-color highlights with text color using the provider's theme accent. */
+function replaceHighlightWithTextColor(str, highlightColor) {
+  return (str || "").replace(/style="([^"]+)"/gi, (match, inner) => {
+    if (!/background-color\s*:/i.test(inner)) return match;
+    const cleaned = inner
+      .replace(/\s*background-color\s*:\s*[^;]+;?/gi, "")
+      .replace(/\s*;\s*;\s*/g, ";")
+      .replace(/^[\s;]+|[\s;]+$/g, "")
+      .trim();
+    return cleaned ? `style="color: ${highlightColor}; ${cleaned}"` : `style="color: ${highlightColor}"`;
+  });
+}
+
 function formatText(text) {
-  return escapeHtml(text || "").replace(/\n/g, "<br>");
+  const color = getHighlightColorForProvider(currentProvider);
+  return escapeHtml(replaceHighlightWithTextColor(text || "", color)).replace(/\n/g, "<br>");
 }
 
 function stripAnsi(value) {

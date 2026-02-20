@@ -12,6 +12,19 @@ function getFileName(path: string): string {
   return parts[parts.length - 1] ?? path;
 }
 
+/** Replace span background-color highlights with text color using the provider's theme accent. */
+function replaceHighlightWithTextColor(content: string, highlightColor: string): string {
+  return content.replace(/style="([^"]+)"/gi, (match, inner) => {
+    if (!/background-color\s*:/i.test(inner)) return match;
+    const cleaned = inner
+      .replace(/\s*background-color\s*:\s*[^;]+;?/gi, "")
+      .replace(/\s*;\s*;\s*/g, ";")
+      .replace(/^[\s;]+|[\s;]+$/g, "")
+      .trim();
+    return cleaned ? `style="color: ${highlightColor}; ${cleaned}"` : `style="color: ${highlightColor}"`;
+  });
+}
+
 const BASH_LANGUAGES = new Set(["bash", "sh", "shell", "zsh"]);
 
 /** Lines that are prose/headings, not runnable shell commands. Full command chain must be pure commands only. */
@@ -26,6 +39,85 @@ function looksLikeProse(trimmed: string): boolean {
 
 /** Match "Terminal N: ..." section headers that must not appear inside a code block (log has one; UI must not show twice). */
 const TERMINAL_HEADER_LINE_REGEX = /^\s*Terminal\s+\d+:\s*.+$/i;
+
+/** Opening fence for bash-like blocks (bash, sh, shell, zsh). Case-insensitive. */
+const BASH_FENCE_OPEN = /^```(bash|sh|shell|zsh)\s*$/im;
+
+/**
+ * If the model outputs an empty bash code block and the commands as plain text below,
+ * the markdown parser gives the fence empty content and the commands render as paragraphs.
+ * This function finds such empty bash blocks and moves the following command-like lines
+ * into the block so they render inside the code block.
+ */
+export function fillEmptyBashBlocks(content: string): string {
+  if (!content || typeof content !== "string") return content;
+  const openMatch = content.match(BASH_FENCE_OPEN);
+  if (!openMatch) return content;
+  const openStart = content.indexOf(openMatch[0]);
+  const openEnd = openStart + openMatch[0].length;
+  const afterOpen = content.slice(openEnd);
+  let closeIdx = afterOpen.search(/\r?\n```/);
+  if (closeIdx === -1) {
+    const bareClose = afterOpen.match(/^```/);
+    if (bareClose) {
+      closeIdx = 0;
+    } else {
+      return content;
+    }
+  }
+  const blockBody = afterOpen.slice(0, closeIdx).trim();
+  if (blockBody.length > 0) return content;
+  const closeMatch = afterOpen.slice(closeIdx).match(/^(\r?\n)?```/);
+  const closeFenceLen = closeMatch ? closeMatch[0].length : 4;
+  const afterClose = afterOpen.slice(closeIdx + closeFenceLen).replace(/^\s*\r?\n?/, "");
+  const lines = afterClose.split(/\r?\n/);
+  const commandLines: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const t = line.trim();
+    if (t.startsWith("```")) break;
+    if (!t) {
+      if (commandLines.length > 0) commandLines.push(line);
+      continue;
+    }
+    const isNonCommand = NON_COMMAND_LINE_REGEX.test(t) || looksLikeProse(t);
+    if (isNonCommand && commandLines.length > 0) break;
+    if (!isNonCommand) commandLines.push(line);
+  }
+  let linesToFill = commandLines;
+  let beforeBlock = content.slice(0, openStart);
+  let rest = "";
+  if (commandLines.length === 0) {
+    const beforeLines = beforeBlock.split(/\r?\n/);
+    const trailingCommands: string[] = [];
+    let firstTakenIndex = beforeLines.length;
+    for (let i = beforeLines.length - 1; i >= 0; i--) {
+      const line = beforeLines[i];
+      const t = line.trim();
+      if (!t) {
+        if (trailingCommands.length > 0) trailingCommands.unshift(line);
+        continue;
+      }
+      if (t.startsWith("```") || NON_COMMAND_LINE_REGEX.test(t) || looksLikeProse(t)) {
+        firstTakenIndex = i + 1;
+        break;
+      }
+      firstTakenIndex = i;
+      trailingCommands.unshift(line);
+    }
+    if (trailingCommands.length === 0) return content;
+    linesToFill = trailingCommands;
+    beforeBlock = beforeLines.slice(0, firstTakenIndex).join("\n").replace(/\n+$/, "");
+    if (beforeBlock.length > 0) beforeBlock = beforeBlock + "\n\n";
+    else beforeBlock = "";
+  } else {
+    const restLines = lines.slice(commandLines.length);
+    rest = restLines.join("\n").replace(/^\s*\n?/, "");
+  }
+  const lang = (openMatch[1] ?? "bash").toLowerCase();
+  const filledBlock = "```" + lang + "\n" + linesToFill.join("\n").trimEnd() + "\n```";
+  return beforeBlock + filledBlock + (rest ? "\n\n" + rest : "");
+}
 
 /** Remove trailing lines that are "Terminal N: ..." from code block content so they are only shown as markdown, not inside the block. */
 function stripTrailingTerminalHeaderLines(content: string): string {
@@ -70,6 +162,42 @@ const URL_REGEX = /https?:\/\/[^\s\]\)\}\"']+?(?=[,;)\]}\s]|$)/g;
 const LINK_PLACEHOLDER_PREFIX = "\u200B\u200BLINK";
 const LINK_PLACEHOLDER_SUFFIX = "\u200B\u200B";
 const FILE_ACTIVITY_LINK_REGEX = /^(📝\s*Writing|✏️\s*Editing|📖\s*Reading)\s+\[([^\]]+)\]\(file:([^)]+)\)\s*$/;
+
+/** Matches "🖥 Running command:" followed by one or more newlines and then `cmd`. */
+const BASH_COMMAND_BLOCK_REGEX = /🖥 Running command:\n+`([^`]*)`/g;
+
+/** Extract command base (everything before the last space-separated token). Used to detect identical command patterns. */
+function getCommandBase(cmd: string): string {
+  const t = cmd.trim();
+  const parts = t.split(/\s+/);
+  if (parts.length <= 1) return t;
+  return parts.slice(0, -1).join(" ");
+}
+
+/** Collapse consecutive identical command steps to show only the last one. */
+export function collapseIdenticalCommandSteps(content: string): string {
+  const blocks: Array<{ full: string; cmd: string }> = [];
+  let m;
+  const re = new RegExp(BASH_COMMAND_BLOCK_REGEX.source, "g");
+  while ((m = re.exec(content)) !== null) {
+    blocks.push({ full: m[0], cmd: m[1] });
+  }
+  if (blocks.length < 2) return content;
+
+  const keepIndex = new Set<number>();
+  let i = 0;
+  while (i < blocks.length) {
+    const base = getCommandBase(blocks[i].cmd);
+    let j = i + 1;
+    while (j < blocks.length && getCommandBase(blocks[j].cmd) === base) j++;
+    keepIndex.add(j - 1);
+    i = j;
+  }
+
+  let idx = 0;
+  const collapsed = content.replace(re, (match) => (keepIndex.has(idx++) ? match : ""));
+  return collapsed.replace(/\n{4,}/g, "\n\n\n");
+}
 
 type FileActivitySegment =
   | { kind: "file"; prefix: string; fileName: string; path: string }
@@ -145,6 +273,7 @@ export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailB
   const useWarmTone = provider === "claude";
   const useCodexTone = provider === "codex";
   const codeBlockBg = useWarmTone ? "#f0ebe4" : useCodexTone ? "#d1fae5" : theme.surfaceBg;
+  const codeTextColor = useWarmTone ? "#8b6914" : useCodexTone ? "#0d9668" : theme.accent;
   const quoteBg = useWarmTone ? "#f5f0ea" : useCodexTone ? "#ecfdf5" : theme.cardBg;
   const bashHeaderBg = useWarmTone ? "#e8e2da" : useCodexTone ? "#a7f3d0" : theme.surfaceBg;
   const isUser = message.role === "user";
@@ -163,12 +292,12 @@ export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailB
       heading5: { fontSize: 14 },
       heading6: { fontSize: 13 },
       link: { color: theme.accent, textDecorationLine: "underline" as const },
-      code_inline: { backgroundColor: codeBlockBg, color: theme.textPrimary },
-      code_block: { backgroundColor: codeBlockBg, color: theme.textPrimary },
-      fence: { backgroundColor: codeBlockBg, color: theme.textPrimary },
+      code_inline: { color: codeTextColor, backgroundColor: "transparent", marginLeft: 4 },
+      code_block: { color: codeTextColor, backgroundColor: "transparent" },
+      fence: { color: codeTextColor, backgroundColor: "transparent" },
       blockquote: { backgroundColor: quoteBg, borderColor: theme.borderColor },
     }),
-    [theme, codeBlockBg, quoteBg]
+    [theme, codeBlockBg, codeTextColor, quoteBg]
   );
   const styles = useMemo(
     () =>
@@ -277,9 +406,18 @@ export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailB
   );
 
   const sanitizedContent = useMemo(
-    () => stripTrailingIncompleteTag(message.content ?? ""),
+    () => collapseIdenticalCommandSteps(stripTrailingIncompleteTag(message.content ?? "")),
     [message.content]
   );
+  const markdownContent = useMemo(() => {
+    let out = replaceHighlightWithTextColor(sanitizedContent, theme.accent);
+    for (let i = 0; i < 8; i++) {
+      const next = fillEmptyBashBlocks(out);
+      if (next === out) break;
+      out = next;
+    }
+    return out;
+  }, [sanitizedContent, theme.accent]);
   const fileActivitySegments = useMemo(
     () => parseFileActivitySegments(sanitizedContent),
     [sanitizedContent]
@@ -375,13 +513,13 @@ export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailB
               rules={markdownRules}
               onLinkPress={handleMarkdownLinkPress}
             >
-              {wrapBareUrlsInMarkdown(seg.text)}
+              {wrapBareUrlsInMarkdown(replaceHighlightWithTextColor(seg.text, theme.accent))}
             </Markdown>
           );
         })}
       </View>
     ),
-    [fileActivitySegments, handleMarkdownLinkPress, markdownRules, markdownStyles, onFileSelect, styles]
+    [fileActivitySegments, handleMarkdownLinkPress, markdownRules, markdownStyles, onFileSelect, styles, theme.accent]
   );
 
   const showProviderIcon = !isUser && !isSystem && provider;
@@ -432,7 +570,7 @@ export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailB
                   rules={markdownRules}
                   onLinkPress={handleMarkdownLinkPress}
                 >
-                  {wrapBareUrlsInMarkdown(sanitizedContent)}
+                  {wrapBareUrlsInMarkdown(markdownContent)}
                 </Markdown>
               )}
             </ScrollView>
@@ -446,7 +584,7 @@ export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailB
                 rules={markdownRules}
                 onLinkPress={handleMarkdownLinkPress}
               >
-                {wrapBareUrlsInMarkdown(sanitizedContent)}
+                {wrapBareUrlsInMarkdown(markdownContent)}
               </Markdown>
             )
           )

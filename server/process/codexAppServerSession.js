@@ -490,7 +490,7 @@ export function createCodexAppServerSession({
       approvalPolicy,
       sandboxPolicy: null,
       model: options.model ?? null,
-      effort: null,
+      effort: options.effort ?? "medium",
       summary: null,
       personality: null,
       outputSchema: null,

@@ -1,5 +1,7 @@
 # Vibe Coding Everywhere
 
+Part of the [LoVC (Life of Vibe Coding)](https://github.com/Life-Of-Vibe-Coding) community.
+
 Web and mobile clients that connect to a local AI coding assistant (Claude Code CLI, Gemini CLI, or Codex) via Socket.IO. Claude/Gemini run in PTY sessions; Codex runs through `codex app-server` RPC with thread-based continuation (`thread_id`).
 
 ## Table of Contents
