@@ -57,6 +57,7 @@ import {
 
 // Component Imports
 import { MessageBubble, hasFileActivityContent } from "./src/components/chat/MessageBubble";
+import { FollowUpDropdown } from "./src/components/chat/FollowUpDropdown";
 import { TypingIndicator } from "./src/components/chat/TypingIndicator";
 import { PermissionDenialBanner } from "./src/components/common/PermissionDenialBanner";
 import { AskQuestionModal } from "./src/components/chat/AskQuestionModal";
@@ -65,6 +66,8 @@ import { PreviewWebViewModal } from "./src/components/preview/PreviewWebViewModa
 import { RunOutputView } from "./src/components/preview/RunOutputView";
 import { WorkspaceSidebar } from "./src/components/file/WorkspaceSidebar";
 import { FileViewerModal, type CodeRefPayload } from "./src/components/file/FileViewerModal";
+import { loadFollowUpOptions } from "./src/services/follow-up/loader";
+import { buildQuery, type ParsedFollowUp } from "./src/services/follow-up/parser";
 import { SettingsModal, type PermissionModeUI } from "./src/components/settings/SettingsModal";
 import { MenuIcon, SettingsIcon } from "./src/components/icons/HeaderIcons";
 
@@ -254,6 +257,13 @@ export default function App() {
 
   // File Viewer State
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
+
+  // Follow-up State (long-press on assistant message)
+  const [followUpContext, setFollowUpContext] = useState<{
+    messageId: string;
+    content: string;
+  } | null>(null);
+  const [followUpOptions, setFollowUpOptions] = useState<ParsedFollowUp[]>([]);
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [fileIsImage, setFileIsImage] = useState(false);
   const [fileLoading, setFileLoading] = useState(false);
@@ -349,6 +359,16 @@ export default function App() {
         setFileLoading(false);
       });
   }, [selectedFilePath, workspaceFileService]);
+
+  useEffect(() => {
+    void loadFollowUpOptions(serverConfig).then((opts) => setFollowUpOptions(opts));
+  }, [serverConfig]);
+
+  useEffect(() => {
+    if (followUpContext && followUpOptions.length === 0) {
+      void loadFollowUpOptions(serverConfig).then((opts) => setFollowUpOptions(opts));
+    }
+  }, [followUpContext, followUpOptions.length, serverConfig]);
 
   // Callbacks
   const handleFileSelect = useCallback((path: string) => {
@@ -457,6 +477,52 @@ export default function App() {
   const handleOpenPreviewInApp = useCallback((u: string) => {
     if (u) setPreviewUrl(u);
   }, []);
+
+  const handleFollowUpLongPress = useCallback((messageId: string, content: string) => {
+    triggerHaptic("selection");
+    setFollowUpContext({ messageId, content: content ?? "" });
+  }, []);
+
+  const handleFollowUpClose = useCallback(() => {
+    setFollowUpContext(null);
+  }, []);
+
+  const handleFollowUpSelect = useCallback(
+    (index: number) => {
+      if (!followUpContext || index < 0 || index >= followUpOptions.length) return;
+      const option = followUpOptions[index];
+      const query = buildQuery(option.queryTemplate, followUpContext.content);
+      const backend = getBackendPermissionMode(permissionModeUI, provider);
+      const codexOptions =
+        provider === "codex"
+          ? {
+              askForApproval: backend.askForApproval,
+              fullAuto: backend.fullAuto,
+              yolo: backend.yolo,
+            }
+          : undefined;
+      submitPrompt(
+        query,
+        backend.permissionMode,
+        undefined,
+        undefined,
+        backend.approvalMode,
+        codexOptions,
+        option.systemPrompt || undefined
+      );
+      setFollowUpContext(null);
+      setSidebarVisible(false);
+      handleCloseFileViewer();
+    },
+    [
+      followUpContext,
+      followUpOptions,
+      permissionModeUI,
+      provider,
+      submitPrompt,
+      handleCloseFileViewer,
+    ]
+  );
 
   /** When always_ask + Codex, show approval before running command from Run button (run-render-command path). */
   const handleRunCommandWithApproval = useCallback(
@@ -646,6 +712,11 @@ export default function App() {
                         onRunBashCommand={handleRunCommandWithApproval}
                         onOpenUrl={handleOpenPreviewInApp}
                         onFileSelect={handleFileSelectFromChat}
+                        onFollowUpLongPress={
+                          item.role === "assistant"
+                            ? () => handleFollowUpLongPress(item.id, item.content ?? "")
+                            : undefined
+                        }
                       />
                     );
                   }}
@@ -682,6 +753,14 @@ export default function App() {
                   onFileSelect={handleFileSelect}
                 />
               </View>
+
+              {/* Follow-up Dropdown */}
+              <FollowUpDropdown
+                visible={followUpContext != null}
+                onClose={handleFollowUpClose}
+                options={followUpOptions.map((o) => ({ name: o.name, description: o.description }))}
+                onSelect={handleFollowUpSelect}
+              />
 
               {/* File Viewer Overlay */}
               {selectedFilePath != null && (

@@ -88,7 +88,11 @@ function createHandlerRegistry(ctx: EventContext): Map<string, EventHandler> {
     // Append result summary only when it's not already the same as current content (avoid duplicate).
     const curTrim = current.trim();
     const resultTrim = resultText.trim();
-    if (!curTrim.endsWith(resultTrim) && resultTrim.length > 0) {
+    const willAppend = !curTrim.endsWith(resultTrim) && resultTrim.length > 0;
+    // #region agent log
+    fetch('http://127.0.0.1:7648/ingest/90b82ca6-2c33-4285-83a2-301e58d458f5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'90f72f'},body:JSON.stringify({sessionId:'90f72f',location:'eventDispatcher.ts:result',message:'result event',data:{resultLen:resultText.length,willAppend},timestamp:Date.now(),hypothesisId:'H4'})}).catch(()=>{});
+    // #endregion
+    if (willAppend) {
       ctx.appendAssistantText("\n\n---\n\n" + resultText);
     }
   });

@@ -1,8 +1,5 @@
 import type { EventContext, EventHandler } from "../types";
-import {
-  appendOverlapTextDelta,
-  appendToolUseDisplayLine,
-} from "../types";
+import { appendToolUseDisplayLine } from "../types";
 
 /**
  * Codex errors that mean the saved thread is invalid (e.g. state db missing rollout path for thread).
@@ -62,7 +59,12 @@ export function registerCodexHandlers(
   registry.set("item.updated", (data) => {
     const item = data.item as { type?: string; text?: string } | undefined;
     if (item?.type === "agent_message" && typeof item.text === "string" && item.text) {
+      // #region agent log
+      const before = ctx.getCurrentAssistantContent();
       ctx.appendAssistantText(item.text);
+      const after = ctx.getCurrentAssistantContent();
+      fetch('http://127.0.0.1:7648/ingest/90b82ca6-2c33-4285-83a2-301e58d458f5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'90f72f'},body:JSON.stringify({sessionId:'90f72f',location:'eventHandlers.ts:item.updated',message:'agent_message delta',data:{chunkLen:item.text.length,beforeLen:before.length,afterLen:after.length,isCumulative:after===item.text},timestamp:Date.now(),hypothesisId:'H2'})}).catch(()=>{});
+      // #endregion
     }
   });
 
@@ -80,9 +82,18 @@ export function registerCodexHandlers(
     } | undefined;
     if (!item) return;
     if (item.type === "agent_message" && typeof item.text === "string" && item.text) {
-      // item.updated events already streamed this text incrementally.
-      // current may also contain tool-use display lines prepended before the agent message.
-      appendOverlapTextDelta(ctx, item.text);
+      // addMessage ensures the response appears when appendAssistantText (from item.updated)
+      // hasn't flushed to React yet. Dedup: skip if ref already has full content (streaming added it).
+      // Server may send item.completed with a subset (e.g. summary only); skip when streamed content
+      // already contains it to avoid duplicate Summary section.
+      const current = ctx.getCurrentAssistantContent();
+      const alreadyShown = current === item.text || current.includes(item.text);
+      if (!alreadyShown) {
+        ctx.addMessage("assistant", item.text);
+      }
+      // #region agent log
+      fetch('http://127.0.0.1:7648/ingest/90b82ca6-2c33-4285-83a2-301e58d458f5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'90f72f'},body:JSON.stringify({sessionId:'90f72f',location:'eventHandlers.ts:item.completed',message:'agent_message completed',data:{currentLen:current.length,itemTextLen:item.text.length,alreadyShown,addMessageCalled:!alreadyShown},timestamp:Date.now(),hypothesisId:'H1'})}).catch(()=>{});
+      // #endregion
       return;
     }
     if (item.type === "command_execution") {

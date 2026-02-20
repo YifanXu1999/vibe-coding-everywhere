@@ -137,6 +137,8 @@ export function useSocket(options: UseSocketOptions = {}) {
   const pendingCommandAfterNewTerminalRef = useRef<string | null>(null);
   const lastStartedViaRunCommandRef = useRef(false);
   const toolUseByIdRef = useRef<Map<string, { tool_name: string; tool_input?: Record<string, unknown> }>>(new Map());
+  const messagesRef = useRef<Message[]>([]);
+  messagesRef.current = messages;
 
   /**
    * Add a new message to the chat.
@@ -145,6 +147,9 @@ export function useSocket(options: UseSocketOptions = {}) {
   const addMessage = useCallback(
     (role: Message["role"], content: string, codeReferences?: CodeReference[]) => {
       const id = `msg-${++nextIdRef.current}`;
+      // #region agent log
+      if (role === "assistant") { fetch('http://127.0.0.1:7648/ingest/90b82ca6-2c33-4285-83a2-301e58d458f5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'90f72f'},body:JSON.stringify({sessionId:'90f72f',location:'hooks.ts:addMessage',message:'addMessage assistant',data:{contentLen:content.length,contentPreview:content.slice(0,80)+'...',stack:new Error().stack?.split('\n').slice(1,4).join('|')},timestamp:Date.now(),hypothesisId:'H3'})}).catch(()=>{}); }
+      // #endregion
       setMessages((prev) => [...prev, { id, role, content, codeReferences }]);
       return id;
     },
@@ -159,15 +164,17 @@ export function useSocket(options: UseSocketOptions = {}) {
   const appendAssistantText = useCallback((chunk: string) => {
     const sanitized = stripAnsi(chunk);
     if (!sanitized) return;
+    // Update ref synchronously so getCurrentAssistantContent() is correct when
+    // appendOverlapTextDelta runs (e.g. item.completed) before React flushes setMessages.
+    const current = currentAssistantContentRef.current;
+    const next = current ? current + sanitized : sanitized;
+    currentAssistantContentRef.current = next;
     setMessages((prev) => {
       const last = prev[prev.length - 1];
       if (last?.role === "assistant") {
-        const next = last.content + sanitized;
-        currentAssistantContentRef.current = next;
         return [...prev.slice(0, -1), { ...last, content: next }];
       }
       const newMsg: Message = { id: `msg-${++nextIdRef.current}`, role: "assistant", content: sanitized };
-      currentAssistantContentRef.current = sanitized;
       return [...prev, newMsg];
     });
     setTypingIndicator(true);
@@ -289,6 +296,15 @@ export function useSocket(options: UseSocketOptions = {}) {
       addMessage,
       appendAssistantText,
       getCurrentAssistantContent: () => currentAssistantContentRef.current,
+      getLastMessageRole: () => {
+        const m = messagesRef.current;
+        return m.length ? m[m.length - 1]?.role ?? null : null;
+      },
+      getLastMessageContent: () => {
+        const m = messagesRef.current;
+        const last = m.length ? m[m.length - 1] : null;
+        return (last?.content as string) ?? "";
+      },
       deduplicateDenials,
       recordToolUse,
       getAndClearToolUse,
@@ -326,7 +342,11 @@ export function useSocket(options: UseSocketOptions = {}) {
           if (__DEV__ && isAskUserQuestionPayload(parsed)) {
             console.log("[socket/output] AskUserQuestion line received", (parsed as Record<string, unknown>).tool_use_id);
           }
-          if (isProviderStream(parsed)) {
+          const isStream = isProviderStream(parsed);
+          if (__DEV__ && (parsed as Record<string, unknown>).type?.toString().startsWith("item.")) {
+            console.log("[socket/output] item event:", (parsed as Record<string, unknown>).type, "isProviderStream=" + isStream, "item.text=" + ((parsed as Record<string, unknown>).item as { text?: string })?.text?.slice?.(0, 20));
+          }
+          if (isStream) {
             // Handle AI stream events via shared dispatcher (Claude/Gemini/Codex)
             dispatchProviderEvent(parsed as Record<string, unknown>);
           } else {
@@ -356,11 +376,18 @@ export function useSocket(options: UseSocketOptions = {}) {
     // Session ended
     socket.on("exit", ({ exitCode }: { exitCode: number }) => {
       console.log("[exit] code:", exitCode);
+      // #region agent log
+      const msgs = messagesRef.current;
+      const assistantCount = msgs.filter((m) => m.role === "assistant").length;
+      const lastTwo = msgs.slice(-2).map((m) => ({ role: m.role, contentLen: (m.content ?? "").length }));
+      fetch('http://127.0.0.1:7648/ingest/90b82ca6-2c33-4285-83a2-301e58d458f5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'90f72f'},body:JSON.stringify({sessionId:'90f72f',location:'hooks.ts:exit',message:'exit before finalize',data:{totalMsgs:msgs.length,assistantCount,lastTwo},timestamp:Date.now(),hypothesisId:'H5'})}).catch(()=>{});
+      // #endregion
       setClaudeRunning(false);
       setTypingIndicator(false);
       setWaitingForUserInput(false);
-      // Keep sessionId so UI can still show it until next session starts
-      finalizeAssistantMessage();
+      // Defer finalize so React can flush setMessages from item.completed/appendAssistantText first.
+      // Otherwise exit may run in same tick and finalizeAssistantMessage can see stale state.
+      queueMicrotask(() => finalizeAssistantMessage());
       
       if (exitCode !== 0) {
         setLastSessionTerminated(true);
@@ -464,6 +491,7 @@ export function useSocket(options: UseSocketOptions = {}) {
    * @param codeRefs - Optional code references to include
    * @param approvalMode - Optional Gemini approval mode
    * @param codexOptions - Optional Codex flags (askForApproval, fullAuto, yolo, effort)
+   * @param systemPrompt - Optional system prompt override (e.g. from follow-up flow). When provided, used exclusively.
    */
   const submitPrompt = useCallback(
     (
@@ -472,7 +500,8 @@ export function useSocket(options: UseSocketOptions = {}) {
       allowedTools?: string[],
       codeRefs?: CodeRefPayload[],
       approvalMode?: string,
-      codexOptions?: { askForApproval?: string; fullAuto?: boolean; yolo?: boolean; effort?: string }
+      codexOptions?: { askForApproval?: string; fullAuto?: boolean; yolo?: boolean; effort?: string },
+      systemPrompt?: string
     ) => {
       if (!socketRef.current) return;
 
@@ -498,6 +527,7 @@ export function useSocket(options: UseSocketOptions = {}) {
           fullAuto: codexOptions.fullAuto,
           yolo: codexOptions.yolo,
         }),
+        ...(typeof systemPrompt === "string" && systemPrompt.trim() ? { systemPrompt: systemPrompt.trim() } : {}),
       });
 
       // Add user message to chat

@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useEffect, useCallback } from "react";
-import { View, Text, StyleSheet, Linking, Pressable, Alert, ScrollView, Platform, Dimensions } from "react-native";
+import { View, Text, StyleSheet, Linking, Pressable, Alert, ScrollView, Platform } from "react-native";
 import Markdown from "react-native-markdown-display";
 import { useTheme } from "../../theme/index";
 import type { Message } from "../../services/socket/hooks";
@@ -26,13 +26,6 @@ function replaceHighlightWithTextColor(content: string, highlightColor: string):
 }
 
 const BASH_LANGUAGES = new Set(["bash", "sh", "shell", "zsh"]);
-
-// #region agent log
-const DEBUG_LOG = (location: string, message: string, data: Record<string, unknown>, hypothesisId: string) => {
-  const payload = { sessionId: "db4675", location, message, data: { ...data, screenW: Dimensions.get("window").width }, hypothesisId, timestamp: Date.now() };
-  fetch("http://127.0.0.1:7648/ingest/90b82ca6-2c33-4285-83a2-301e58d458f5", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "db4675" }, body: JSON.stringify(payload) }).catch(() => {});
-};
-// #endregion
 
 /** Lines that are prose/headings, not runnable shell commands. Full command chain must be pure commands only. */
 const NON_COMMAND_LINE_REGEX =
@@ -335,9 +328,11 @@ interface MessageBubbleProps {
   onOpenUrl?: (url: string) => void;
   /** When provided, file: links (from Writing/Editing/Reading) open the file in explorer. */
   onFileSelect?: (path: string) => void;
+  /** When provided for assistant messages, long-press opens follow-up dropdown. */
+  onFollowUpLongPress?: () => void;
 }
 
-export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailBoxMaxHeight = 360, provider, onRunBashCommand, onOpenUrl, onFileSelect }: MessageBubbleProps) {
+export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailBoxMaxHeight = 360, provider, onRunBashCommand, onOpenUrl, onFileSelect, onFollowUpLongPress }: MessageBubbleProps) {
   const theme = useTheme();
   const useWarmTone = provider === "claude";
   const useCodexTone = provider === "codex";
@@ -554,9 +549,24 @@ export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailB
     [fileActivitySegments]
   );
   const markdownRules = useMemo(() => {
-    if (!onRunBashCommand) return undefined;
-    return {
-      fence: (
+    const base: Record<string, unknown> = {};
+    if (!isUser && !isSystem) {
+      base.text = (
+        node: { key?: string; content?: string },
+        children: React.ReactNode,
+        _parent: unknown,
+        mdStyles: Record<string, unknown>,
+        inheritedStyles: Record<string, unknown> = {}
+      ) => (
+        <Text key={node.key} style={[inheritedStyles, mdStyles.text ?? markdownStyles.text]} selectable>
+          {node.content ?? children}
+        </Text>
+      );
+    }
+    if (!onRunBashCommand && Object.keys(base).length === 0) return undefined;
+    const rules: Record<string, unknown> = { ...base };
+    if (onRunBashCommand) {
+      rules.fence = (
         node: { key?: string; content?: string; sourceInfo?: string },
         _children: React.ReactNode,
         _parent: unknown,
@@ -571,7 +581,7 @@ export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailB
         const isBash = BASH_LANGUAGES.has(lang);
         const handleRunPress = () => {
           const trimmed = String(content).trim();
-          if (!trimmed) return;
+          if (!trimmed || !onRunBashCommand) return;
           const command = extractBashCommandOnly(trimmed) || trimmed;
           Alert.alert(
             "Run command",
@@ -611,9 +621,10 @@ export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailB
           );
         }
         return codeBlock;
-      },
-    };
-  }, [onRunBashCommand, markdownStyles, styles]);
+      };
+    }
+    return rules as React.ComponentProps<typeof Markdown>["rules"];
+  }, [onRunBashCommand, markdownStyles, styles, isUser, isSystem]);
 
   const renderFileActivityContent = useCallback(
     () => (
@@ -661,12 +672,6 @@ export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailB
           <View
             key={key}
             style={styles.commandTerminalContainer}
-            // #region agent log
-            onLayout={(e) => {
-              const { width } = e.nativeEvent.layout;
-              DEBUG_LOG("MessageBubble.tsx:commandTerminalContainer", "Commands container layout", { containerWidth: width }, "H2");
-            }}
-            // #endregion
           >
             <View style={styles.commandTerminalHeader}>
               <Text style={styles.commandTerminalTitle}>
@@ -683,14 +688,6 @@ export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailB
                 <View
                   key={`line-${i}`}
                   style={styles.commandTerminalLine}
-                  // #region agent log
-                  onLayout={(e) => {
-                    const { width } = e.nativeEvent.layout;
-                    if (i === 0) {
-                      DEBUG_LOG("MessageBubble.tsx:commandTerminalLine", "First command line layout", { lineWidth: width, cmdLen: cmd.command.length }, "H3");
-                    }
-                  }}
-                  // #endregion
                 >
                   <Text style={styles.commandTerminalPrompt} selectable={false}>
                     $
@@ -742,115 +739,117 @@ export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailB
   const ProviderIcon =
     provider === "claude" ? ClaudeIcon : provider === "codex" ? CodexIcon : GeminiIcon;
 
+  const bubbleContent = (
+    <>
+      {message.content && message.content.trim() !== "" ? (
+        isTerminatedLabel ? (
+          <Text
+            style={[styles.bubbleText, styles.bubbleTextTerminated]}
+            selectable={false}
+          >
+            {message.content}
+          </Text>
+        ) : isUser || isSystem ? (
+          <Text
+            style={[
+              styles.bubbleText,
+              isSystem && styles.bubbleTextSystem,
+            ]}
+            selectable
+          >
+            {message.content}
+          </Text>
+        ) : showAsTailBox ? (
+          <ScrollView
+            ref={tailScrollRef}
+            style={[styles.tailBoxScroll, { maxHeight: tailBoxMaxHeight }]}
+            contentContainerStyle={styles.tailBoxContent}
+            showsVerticalScrollIndicator={false}
+            showsHorizontalScrollIndicator={false}
+            nestedScrollEnabled
+          >
+            {hasCommandRunSegments ? (
+              renderCommandRunSegmentsContent()
+            ) : hasRawFileActivityLinks ? (
+              renderFileActivityContent()
+            ) : (
+              <Markdown
+                style={markdownStyles}
+                mergeStyle
+                rules={markdownRules}
+                onLinkPress={handleMarkdownLinkPress}
+              >
+                {wrapBareUrlsInMarkdown(markdownContent)}
+              </Markdown>
+            )}
+          </ScrollView>
+        ) : hasCommandRunSegments ? (
+          renderCommandRunSegmentsContent()
+        ) : hasRawFileActivityLinks ? (
+          renderFileActivityContent()
+        ) : (
+          <Markdown
+            style={markdownStyles}
+            mergeStyle
+            rules={markdownRules}
+            onLinkPress={handleMarkdownLinkPress}
+          >
+            {wrapBareUrlsInMarkdown(markdownContent)}
+          </Markdown>
+        )
+      ) : !isUser && !isSystem ? (
+        <Text style={[styles.bubbleText, styles.bubbleTextPlaceholder]} selectable={false}>
+          …
+        </Text>
+      ) : null}
+      {refs.length > 0 && (
+        <View style={[styles.refPills, message.content ? styles.refPillsWithContent : null]}>
+          {refs.map((ref, index) => (
+            <View key={`${ref.path}-${ref.startLine}-${index}`} style={styles.refPill}>
+              <Text style={styles.refPillIcon}>◇</Text>
+              <Text style={styles.refPillText} numberOfLines={1}>
+                {getFileName(ref.path)} ({ref.startLine === ref.endLine ? ref.startLine : `${ref.startLine}-${ref.endLine}`})
+              </Text>
+            </View>
+          ))}
+        </View>
+      )}
+    </>
+  );
+
+  const bubbleLayoutProps = {};
+
   return (
     <View
       style={[styles.row, isUser && styles.rowUser]}
-      // #region agent log
-      onLayout={(e) => {
-        const { width } = e.nativeEvent.layout;
-        if (hasCommandRunSegments) {
-          DEBUG_LOG("MessageBubble.tsx:row", "Row layout", { rowWidth: width }, "H4");
-        }
-      }}
-      // #endregion
     >
       {showProviderIcon && (
         <View style={styles.providerIconWrap}>
           <ProviderIcon size={24} />
         </View>
       )}
-      <View
-        style={[
-          styles.bubble,
-          isUser && styles.bubbleUser,
-          isSystem && styles.bubbleSystem,
-          !isUser && !isSystem && styles.bubbleAssistant,
-        ]}
-        // #region agent log
-        onLayout={(e) => {
-          const { width } = e.nativeEvent.layout;
-          if (hasCommandRunSegments) {
-            DEBUG_LOG("MessageBubble.tsx:bubble", "Bubble layout", { bubbleWidth: width, hasCommands: true }, "H1");
-          }
-        }}
-        // #endregion
-      >
-        {message.content && message.content.trim() !== "" ? (
-          isTerminatedLabel ? (
-            <Text
-              style={[styles.bubbleText, styles.bubbleTextTerminated]}
-              selectable={false}
-            >
-              {message.content}
-            </Text>
-          ) : isUser || isSystem ? (
-            <Text
-              style={[
-                styles.bubbleText,
-                isSystem && styles.bubbleTextSystem,
-              ]}
-              selectable
-            >
-              {message.content}
-            </Text>
-          ) : showAsTailBox ? (
-            <ScrollView
-              ref={tailScrollRef}
-              style={[styles.tailBoxScroll, { maxHeight: tailBoxMaxHeight }]}
-              contentContainerStyle={styles.tailBoxContent}
-              showsVerticalScrollIndicator={false}
-              showsHorizontalScrollIndicator={false}
-              nestedScrollEnabled
-            >
-              {hasCommandRunSegments
-                ? renderCommandRunSegmentsContent()
-                : hasRawFileActivityLinks
-                  ? renderFileActivityContent()
-                  : (
-                    <Markdown
-                      style={markdownStyles}
-                      mergeStyle
-                      rules={markdownRules}
-                      onLinkPress={handleMarkdownLinkPress}
-                    >
-                      {wrapBareUrlsInMarkdown(markdownContent)}
-                    </Markdown>
-                  )}
-            </ScrollView>
-          ) : (
-            hasCommandRunSegments
-              ? renderCommandRunSegmentsContent()
-              : hasRawFileActivityLinks
-                ? renderFileActivityContent()
-                : (
-                  <Markdown
-                    style={markdownStyles}
-                    mergeStyle
-                    rules={markdownRules}
-                    onLinkPress={handleMarkdownLinkPress}
-                  >
-                    {wrapBareUrlsInMarkdown(markdownContent)}
-                  </Markdown>
-                )
-          )
-        ) : !isUser && !isSystem ? (
-          <Text style={[styles.bubbleText, styles.bubbleTextPlaceholder]} selectable={false}>
-            …
-          </Text>
-        ) : null}
-        {refs.length > 0 && (
-          <View style={[styles.refPills, message.content ? styles.refPillsWithContent : null]}>
-            {refs.map((ref, index) => (
-              <View key={`${ref.path}-${ref.startLine}-${index}`} style={styles.refPill}>
-                <Text style={styles.refPillIcon}>◇</Text>
-                <Text style={styles.refPillText} numberOfLines={1}>
-                  {getFileName(ref.path)} ({ref.startLine === ref.endLine ? ref.startLine : `${ref.startLine}-${ref.endLine}`})
-                </Text>
-              </View>
-            ))}
-          </View>
-        )}
-      </View>
+      {onFollowUpLongPress && !isUser && !isSystem ? (
+        <Pressable
+          style={[styles.bubble, styles.bubbleAssistant]}
+          onLongPress={onFollowUpLongPress}
+          delayLongPress={400}
+          {...bubbleLayoutProps}
+        >
+          {bubbleContent}
+        </Pressable>
+      ) : (
+        <View
+          style={[
+            styles.bubble,
+            isUser && styles.bubbleUser,
+            isSystem && styles.bubbleSystem,
+            !isUser && !isSystem && styles.bubbleAssistant,
+          ]}
+          {...bubbleLayoutProps}
+        >
+          {bubbleContent}
+        </View>
+      )}
     </View>
   );
 }

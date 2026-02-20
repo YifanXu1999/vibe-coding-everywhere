@@ -442,8 +442,17 @@ export function createProcessManager(socket, { hasCompletedFirstRunRef, session_
         ? payload.approvalMode.trim()
         : DEFAULT_GEMINI_APPROVAL_MODE;
 
+    // When payload.systemPrompt is provided (e.g. from follow-up flow), use it exclusively.
+    // Otherwise, for Claude only, use server-side getChatSystemPrompt().
     let systemPrompt = null;
-    if (provider === "claude") {
+    const payloadSystemPrompt =
+      typeof payload?.systemPrompt === "string" && payload.systemPrompt.trim()
+        ? payload.systemPrompt.trim()
+        : null;
+    if (payloadSystemPrompt) {
+      systemPrompt = payloadSystemPrompt;
+      console.log("[system-prompt] used (from payload):", systemPrompt.slice(0, 80) + "...");
+    } else if (provider === "claude") {
       systemPrompt = getChatSystemPrompt();
       console.log(
         "[system-prompt] used (override):",

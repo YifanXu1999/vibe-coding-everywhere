@@ -188,6 +188,11 @@ export function createCodexAppServerSession({
   function emitOutputLine(line) {
     socket.emit("output", line);
     if (codexIoOutputStream?.writable) codexIoOutputStream.write(line);
+    // [DEBUG] Confirm server emits item.updated/item.completed (agent message) to socket
+    if (typeof line === "string" && line.includes('"type":"item.')) {
+      const m = line.match(/"type":"(item\.(?:updated|completed))"/);
+      if (m) console.log("[codex] emit output:", m[1], "→ socket");
+    }
   }
 
   function emitCodexEvent(event) {

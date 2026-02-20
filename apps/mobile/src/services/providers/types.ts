@@ -19,6 +19,10 @@ export interface EventContext {
   appendAssistantText: (chunk: string) => void;
   /** Current assistant message content (for delta-only append to avoid full-text display when stream ends). */
   getCurrentAssistantContent: () => string;
+  /** Role of the last message in the chat (to detect stale ref when last is user but ref has content). Optional. */
+  getLastMessageRole?: () => Message["role"] | null;
+  /** Content of the last message (for deduplication). Optional. */
+  getLastMessageContent?: () => string;
   deduplicateDenials: (denials: PermissionDenial[]) => PermissionDenial[];
   /** Record tool_use by id for later tool_result (e.g. policy_violation). Optional. */
   recordToolUse?: (id: string, data: ToolUseRecord) => void;

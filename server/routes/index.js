@@ -9,7 +9,7 @@
  */
 import fs from "fs";
 import path from "path";
-import { SIDEBAR_REFRESH_INTERVAL_MS, getWorkspaceCwd, setWorkspaceCwd, WORKSPACE_ALLOWED_ROOT } from "../config/index.js";
+import { SIDEBAR_REFRESH_INTERVAL_MS, getWorkspaceCwd, setWorkspaceCwd, WORKSPACE_ALLOWED_ROOT, projectRoot } from "../config/index.js";
 import { buildWorkspaceTree, IMAGE_EXT, MAX_TEXT_FILE_BYTES } from "../utils/index.js";
 
 /**
@@ -186,6 +186,56 @@ export function setupRoutes(app) {
       res.status(500).send(err.message || "Failed to serve file");
     }
   }
+
+  /**
+   * GET /api/follow-up-options
+   * Returns parsed follow-up options from prompts/follow-up/*.md (project root, not workspace).
+   * Used by mobile app for the follow-up dropdown on assistant messages.
+   */
+  app.get("/api/follow-up-options", (_, res) => {
+    const followUpDir = path.join(projectRoot, "prompts", "follow-up");
+    const files = ["1.run-command.md", "2.explain.md", "3.review.md"];
+    const results = [];
+    const FRONTMATTER_KEY_REGEX = /^##\s+(\w+)\s*:\s*(.*)$/;
+
+    for (const filename of files) {
+      try {
+        const fullPath = path.join(followUpDir, filename);
+        if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) continue;
+        const content = fs.readFileSync(fullPath, "utf8");
+        const lines = content.split(/\r?\n/);
+        const frontmatter = {};
+        let bodyStartIndex = -1;
+
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          if (i === 0 && line.trim() === "---") continue;
+          const match = line.match(FRONTMATTER_KEY_REGEX);
+          if (match) {
+            const key = (match[1] || "").trim().toLowerCase();
+            const value = (match[2] ?? "").trim();
+            frontmatter[key] = value;
+          } else if (bodyStartIndex === -1 && line.trim() !== "") {
+            bodyStartIndex = i;
+            break;
+          }
+        }
+
+        const name = frontmatter.name ?? "";
+        const description = frontmatter.description ?? "";
+        const queryTemplate = frontmatter.query ?? "";
+        if (!name || !queryTemplate) continue;
+
+        const bodyStart = bodyStartIndex >= 0 ? bodyStartIndex : lines.length;
+        const systemPrompt = lines.slice(bodyStart).join("\n").trim();
+
+        results.push({ name, description, queryTemplate, systemPrompt });
+      } catch {
+        // Skip files that fail to read or parse
+      }
+    }
+    res.json(results);
+  });
 
   /**
    * GET /api/workspace-file
