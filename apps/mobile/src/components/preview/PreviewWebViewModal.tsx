@@ -13,12 +13,22 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
 import { useTheme } from "../../theme/index";
+import { UrlChoiceModal } from "./UrlChoiceModal";
 
 function normalizeUrl(input: string): string {
   const trimmed = input.trim();
   if (!trimmed) return trimmed;
   if (/^https?:\/\//i.test(trimmed)) return trimmed;
   return "https://" + trimmed;
+}
+
+function isLocalhostUrl(url: string): boolean {
+  try {
+    const h = new URL(url).hostname.toLowerCase();
+    return h === "localhost" || h === "127.0.0.1";
+  } catch {
+    return false;
+  }
 }
 
 /** Strip our cache-bust param so storing this URL doesn't cause loadUri to change every time and trigger reload loop. */
@@ -38,6 +48,8 @@ interface PreviewWebViewModalProps {
   url: string;
   title?: string;
   onClose: () => void;
+  /** Resolver for localhost/127.0.0.1 -> Tailscale (EXPO_PUBLIC_PREVIEW_HOST). When set, prompts user to use VPN URL when localhost is detected. */
+  resolvePreviewUrl?: (url: string) => string;
 }
 
 export function PreviewWebViewModal({
@@ -45,6 +57,7 @@ export function PreviewWebViewModal({
   url,
   title = "Preview",
   onClose,
+  resolvePreviewUrl,
 }: PreviewWebViewModalProps) {
   const theme = useTheme();
   const styles = useMemo(() => createPreviewStyles(theme), [theme]);
@@ -56,28 +69,62 @@ export function PreviewWebViewModal({
   const [loadKey, setLoadKey] = useState(() => Date.now());
   const webViewRef = useRef<WebView>(null);
   const insets = useSafeAreaInsets();
+  const [urlChoiceVisible, setUrlChoiceVisible] = useState(false);
+  const pendingUrlChoice = useRef<{ normalized: string; thenApply: (u: string) => void } | null>(null);
+
+  const applyUrl = (u: string) => {
+    setCurrentUrl(u);
+    setUrlInputValue(u);
+    setError(null);
+    setLoading(true);
+    setLoadKey(Date.now());
+  };
+
+  const promptLocalhostToVpn = (normalized: string, thenApply: (u: string) => void) => {
+    if (!resolvePreviewUrl || !isLocalhostUrl(normalized)) {
+      thenApply(normalized);
+      return;
+    }
+    pendingUrlChoice.current = { normalized, thenApply };
+    setUrlChoiceVisible(true);
+  };
+
+  const handleUrlChoiceVpn = () => {
+    const p = pendingUrlChoice.current;
+    if (p && resolvePreviewUrl) {
+      p.thenApply(resolvePreviewUrl(p.normalized));
+    }
+    pendingUrlChoice.current = null;
+    setUrlChoiceVisible(false);
+  };
+
+  const handleUrlChoiceOriginal = () => {
+    const p = pendingUrlChoice.current;
+    if (p) {
+      p.thenApply(p.normalized);
+      pendingUrlChoice.current = null;
+      setUrlChoiceVisible(false);
+    }
+  };
+
+  const handleUrlChoiceCancel = () => {
+    pendingUrlChoice.current = null;
+    setUrlChoiceVisible(false);
+  };
 
   useEffect(() => {
     if (visible && url?.trim()) {
-      const resolved = url.trim();
-      setCurrentUrl(resolved);
-      setUrlInputValue(resolved);
-      setError(null);
-      setLoading(true);
-      setLoadKey(Date.now());
+      const normalized = normalizeUrl(url.trim());
+      promptLocalhostToVpn(normalized, applyUrl);
     }
-  }, [visible, url]);
+  }, [visible, url, resolvePreviewUrl]);
 
   const handleGo = () => {
     Keyboard.dismiss();
     const raw = urlInputValue.trim();
     if (!raw) return;
-    const resolved = normalizeUrl(raw);
-    setCurrentUrl(resolved);
-    setUrlInputValue(resolved);
-    setLoading(true);
-    setError(null);
-    setLoadKey(Date.now());
+    const normalized = normalizeUrl(raw);
+    promptLocalhostToVpn(normalized, applyUrl);
   };
 
   const handleReload = () => {
@@ -211,6 +258,17 @@ export function PreviewWebViewModal({
           </View>
         )}
       </View>
+
+      <UrlChoiceModal
+        visible={urlChoiceVisible}
+        title="Localhost URL"
+        description="This URL uses localhost/127.0.0.1. On this device you may not be able to reach it."
+        originalUrl={pendingUrlChoice.current?.normalized ?? ""}
+        vpnUrl={pendingUrlChoice.current && resolvePreviewUrl ? resolvePreviewUrl(pendingUrlChoice.current.normalized) : ""}
+        onChooseVpn={handleUrlChoiceVpn}
+        onChooseOriginal={handleUrlChoiceOriginal}
+        onCancel={handleUrlChoiceCancel}
+      />
     </Modal>
   );
 }

@@ -231,15 +231,14 @@ export default function App() {
     [serverConfig]
   );
 
-  // Permission Mode State
+  // Permission Mode State (default: always allow / yolo)
   const defaultPermissionModeUI: PermissionModeUI =
     typeof process !== "undefined" &&
-  (process.env?.EXPO_PUBLIC_DEFAULT_PERMISSION_MODE === "acceptEdits" ||
-    process.env?.EXPO_PUBLIC_DEFAULT_PERMISSION_MODE === "acceptPermissions")
+    (process.env?.EXPO_PUBLIC_DEFAULT_PERMISSION_MODE === "always_ask" ||
+      process.env?.EXPO_PUBLIC_DEFAULT_PERMISSION_MODE === "acceptEdits" ||
+      process.env?.EXPO_PUBLIC_DEFAULT_PERMISSION_MODE === "acceptPermissions")
       ? "always_ask"
-      : provider === "codex"
-        ? "always_ask"
-        : "yolo";
+      : "yolo";
   
   const [permissionModeUI, setPermissionModeUI] = useState<PermissionModeUI>(defaultPermissionModeUI);
 
@@ -456,8 +455,8 @@ export default function App() {
   );
 
   const handleOpenPreviewInApp = useCallback((u: string) => {
-    if (u) setPreviewUrl(serverConfig.resolvePreviewUrl(u));
-  }, [serverConfig]);
+    if (u) setPreviewUrl(u);
+  }, []);
 
   /** When always_ask + Codex, show approval before running command from Run button (run-render-command path). */
   const handleRunCommandWithApproval = useCallback(
@@ -766,6 +765,7 @@ export default function App() {
             url={previewUrl ?? ""}
             title="Preview"
             onClose={handleClosePreview}
+            resolvePreviewUrl={serverConfig.resolvePreviewUrl}
           />
 
           {/* Full Screen Terminal Modal */}
