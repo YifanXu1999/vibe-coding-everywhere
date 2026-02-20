@@ -149,7 +149,12 @@ export function formatToolUseForDisplay(name: string, input: unknown): string {
       return file && pathStr ? fileActivityLine("📝 Writing", file, pathStr) : "📝 Writing file";
     case "Bash": {
       const cmd = obj.command != null ? String(obj.command).trim() : "";
-      const displayCmd = cmd.length > 120 ? cmd.slice(0, 117) + "..." : cmd;
+      // Prefer full command for mobile (UI will wrap/scroll). If very long, show start + " … " + end for path readability.
+      const maxLen = 380;
+      const displayCmd =
+        cmd.length <= maxLen
+          ? cmd
+          : cmd.slice(0, maxLen - 20) + " … " + cmd.slice(-16);
       return displayCmd ? `🖥 Running command:\n\n\`${displayCmd}\`` : "🖥 Running command";
     }
     case "TodoWrite":

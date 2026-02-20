@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useEffect, useCallback } from "react";
-import { View, Text, StyleSheet, Linking, Pressable, Alert, ScrollView } from "react-native";
+import { View, Text, StyleSheet, Linking, Pressable, Alert, ScrollView, Platform, Dimensions } from "react-native";
 import Markdown from "react-native-markdown-display";
 import { useTheme } from "../../theme/index";
 import type { Message } from "../../services/socket/hooks";
@@ -26,6 +26,13 @@ function replaceHighlightWithTextColor(content: string, highlightColor: string):
 }
 
 const BASH_LANGUAGES = new Set(["bash", "sh", "shell", "zsh"]);
+
+// #region agent log
+const DEBUG_LOG = (location: string, message: string, data: Record<string, unknown>, hypothesisId: string) => {
+  const payload = { sessionId: "db4675", location, message, data: { ...data, screenW: Dimensions.get("window").width }, hypothesisId, timestamp: Date.now() };
+  fetch("http://127.0.0.1:7648/ingest/90b82ca6-2c33-4285-83a2-301e58d458f5", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "db4675" }, body: JSON.stringify(payload) }).catch(() => {});
+};
+// #endregion
 
 /** Lines that are prose/headings, not runnable shell commands. Full command chain must be pure commands only. */
 const NON_COMMAND_LINE_REGEX =
@@ -163,8 +170,11 @@ const LINK_PLACEHOLDER_PREFIX = "\u200B\u200BLINK";
 const LINK_PLACEHOLDER_SUFFIX = "\u200B\u200B";
 const FILE_ACTIVITY_LINK_REGEX = /^(📝\s*Writing|✏️\s*Editing|📖\s*Reading)\s+\[([^\]]+)\]\(file:([^)]+)\)\s*$/;
 
-/** Matches "🖥 Running command:" followed by one or more newlines and then `cmd`. */
-const BASH_COMMAND_BLOCK_REGEX = /🖥 Running command:\n+`([^`]*)`/g;
+/** Matches "🖥 Running command:" followed by newlines, `cmd`, and optional status (→ or ->). */
+const BASH_COMMAND_BLOCK_REGEX = /🖥 Running command:\n+`([^`]*)`(?:\n\n(?:→|->)\s*(Completed|Failed)(?:\s*\((\d+)\))?)?/g;
+
+/** Status-only lines to filter out or assign to commands. */
+const STATUS_ONLY_REGEX = /^(?:→|->)\s*(Completed|Failed)(?:\s*\((\d+)\))?\s*$/;
 
 /** Extract command base (everything before the last space-separated token). Used to detect identical command patterns. */
 function getCommandBase(cmd: string): string {
@@ -199,9 +209,68 @@ export function collapseIdenticalCommandSteps(content: string): string {
   return collapsed.replace(/\n{4,}/g, "\n\n\n");
 }
 
+/** Segment for compact command list: one row per command with optional status (mobile-friendly). */
+export type CommandRunSegment = {
+  kind: "command";
+  command: string;
+  status?: "Completed" | "Failed";
+  exitCode?: number;
+};
+
 type FileActivitySegment =
   | { kind: "file"; prefix: string; fileName: string; path: string }
   | { kind: "text"; text: string };
+
+/** Splits content into markdown and command-run segments for mixed rendering (e.g. compact command list + rest as markdown). */
+export function parseCommandRunSegments(content: string): Array<{ type: "markdown"; content: string } | CommandRunSegment> {
+  const re = new RegExp(BASH_COMMAND_BLOCK_REGEX.source, "g");
+  const segments: Array<{ type: "markdown"; content: string } | CommandRunSegment> = [];
+  let lastEnd = 0;
+  let m;
+  while ((m = re.exec(content)) !== null) {
+    if (m.index > lastEnd) {
+      const slice = content.slice(lastEnd, m.index).trim();
+      const lines = slice.split(/\n/).map((l) => l.trim()).filter(Boolean);
+      const isAllStatusLines = lines.length > 0 && lines.every((l) => STATUS_ONLY_REGEX.test(l));
+      if (slice.length && !isAllStatusLines) segments.push({ type: "markdown", content: slice });
+    }
+    segments.push({
+      kind: "command",
+      command: m[1] ?? "",
+      status: (m[2] as "Completed" | "Failed" | undefined) ?? undefined,
+      exitCode: m[3] != null ? parseInt(m[3], 10) : undefined,
+    });
+    lastEnd = m.index + (m[0].length ?? 0);
+  }
+  if (lastEnd < content.length) {
+    const slice = content.slice(lastEnd).trim();
+    const lines = slice.split(/\n/).map((l) => l.trim()).filter(Boolean);
+    const isAllStatusLines = lines.length > 0 && lines.every((l) => STATUS_ONLY_REGEX.test(l));
+    if (isAllStatusLines) {
+      const statuses = lines
+        .map((line) => {
+          const m = line.match(STATUS_ONLY_REGEX);
+          return m
+            ? { status: m[1] as "Completed" | "Failed", exitCode: m[2] != null ? parseInt(m[2], 10) : undefined }
+            : null;
+        })
+        .filter((s): s is { status: "Completed" | "Failed"; exitCode?: number } => s != null);
+      const cmdIndices: number[] = [];
+      for (let i = segments.length - 1; i >= 0; i--) {
+        if ((segments[i] as CommandRunSegment).kind === "command") cmdIndices.unshift(i);
+      }
+      for (let i = 0; i < statuses.length && i < cmdIndices.length; i++) {
+        const cmd = segments[cmdIndices[i]] as CommandRunSegment;
+        const s = statuses[i];
+        cmd.status = s.status;
+        cmd.exitCode = s.exitCode;
+      }
+    } else if (slice.length) {
+      segments.push({ type: "markdown", content: slice });
+    }
+  }
+  return segments;
+}
 
 function parseFileActivitySegments(content: string): FileActivitySegment[] {
   const lines = content.split(/\r?\n/);
@@ -276,6 +345,10 @@ export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailB
   const codeTextColor = useWarmTone ? "#8b6914" : useCodexTone ? "#0d9668" : theme.accent;
   const quoteBg = useWarmTone ? "#f5f0ea" : useCodexTone ? "#ecfdf5" : theme.cardBg;
   const bashHeaderBg = useWarmTone ? "#e8e2da" : useCodexTone ? "#a7f3d0" : theme.surfaceBg;
+  const terminalBg = useWarmTone ? "#2d2820" : useCodexTone ? "#0f2419" : theme.mode === "dark" ? "#1e293b" : "#1e293b";
+  const terminalBorder = useWarmTone ? "rgba(139,105,20,0.3)" : useCodexTone ? "rgba(13,150,104,0.3)" : theme.borderColor;
+  const terminalText = useWarmTone ? "rgba(255,255,255,0.88)" : useCodexTone ? "rgba(255,255,255,0.88)" : "rgba(255,255,255,0.9)";
+  const terminalPrompt = useWarmTone ? "rgba(255,220,180,0.6)" : useCodexTone ? "rgba(167,243,208,0.7)" : "rgba(255,255,255,0.5)";
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
   const refs = message.codeReferences ?? [];
@@ -312,6 +385,7 @@ export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailB
           maxWidth: "80%",
           backgroundColor: "transparent",
         },
+        bubbleAssistant: { flex: 1 },
         bubbleUser: {
           borderWidth: 1,
           borderColor: theme.borderColor,
@@ -372,8 +446,53 @@ export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailB
         bashRunButtonPressed: { opacity: 0.85 },
         bashRunButtonText: { fontSize: 13, fontWeight: "600" as const, color: "#fff" },
         bashCodeBlock: { paddingHorizontal: 12, paddingVertical: 10 },
+        commandRunSection: { marginVertical: 6, gap: 8 },
+        commandTerminalContainer: {
+          width: "100%",
+          borderWidth: 1,
+          borderColor: terminalBorder,
+          backgroundColor: terminalBg,
+          borderRadius: 10,
+          overflow: "hidden" as const,
+        },
+        commandTerminalHeader: {
+          flexDirection: "row" as const,
+          alignItems: "center",
+          justifyContent: "space-between",
+          paddingHorizontal: 10,
+          paddingVertical: 6,
+          borderBottomWidth: 1,
+          borderBottomColor: terminalBorder,
+        },
+        commandTerminalTitle: { fontSize: 11, fontWeight: "600" as const, color: terminalPrompt },
+        commandTerminalScroll: {
+          maxHeight: 320,
+          minHeight: 120,
+        },
+        commandTerminalContent: { paddingHorizontal: 10, paddingVertical: 8, paddingBottom: 12 },
+        commandTerminalLine: {
+          flexDirection: "row" as const,
+          alignItems: "flex-start",
+          gap: 6,
+          paddingVertical: 2,
+          minHeight: 22,
+        },
+        commandTerminalPrompt: {
+          fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+          fontSize: 11,
+          lineHeight: 18,
+          color: terminalPrompt,
+        },
+        commandTerminalText: {
+          flex: 1,
+          fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+          fontSize: 11,
+          lineHeight: 18,
+          color: terminalText,
+        },
+        commandTerminalStatus: { fontSize: 10, lineHeight: 18, color: terminalPrompt },
       }),
-    [theme, codeBlockBg, bashHeaderBg]
+    [theme, codeBlockBg, bashHeaderBg, terminalBg, terminalBorder, terminalText, terminalPrompt]
   );
 
   useEffect(() => {
@@ -408,6 +527,14 @@ export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailB
   const sanitizedContent = useMemo(
     () => collapseIdenticalCommandSteps(stripTrailingIncompleteTag(message.content ?? "")),
     [message.content]
+  );
+  const commandRunSegments = useMemo(
+    () => parseCommandRunSegments(sanitizedContent),
+    [sanitizedContent]
+  );
+  const hasCommandRunSegments = useMemo(
+    () => commandRunSegments.some((s) => (s as { kind?: string }).kind === "command"),
+    [commandRunSegments]
   );
   const markdownContent = useMemo(() => {
     let out = replaceHighlightWithTextColor(sanitizedContent, theme.accent);
@@ -522,18 +649,132 @@ export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailB
     [fileActivitySegments, handleMarkdownLinkPress, markdownRules, markdownStyles, onFileSelect, styles, theme.accent]
   );
 
+  const renderCommandRunSegmentsContent = useCallback(
+    () => {
+      const nodes: React.ReactNode[] = [];
+      let commandGroup: CommandRunSegment[] = [];
+      const flushCommandGroup = (key: string) => {
+        if (commandGroup.length === 0) return;
+        const cmds = [...commandGroup];
+        commandGroup = [];
+        nodes.push(
+          <View
+            key={key}
+            style={styles.commandTerminalContainer}
+            // #region agent log
+            onLayout={(e) => {
+              const { width } = e.nativeEvent.layout;
+              DEBUG_LOG("MessageBubble.tsx:commandTerminalContainer", "Commands container layout", { containerWidth: width }, "H2");
+            }}
+            // #endregion
+          >
+            <View style={styles.commandTerminalHeader}>
+              <Text style={styles.commandTerminalTitle}>
+                Commands ({cmds.length})
+              </Text>
+            </View>
+            <ScrollView
+              style={styles.commandTerminalScroll}
+              contentContainerStyle={styles.commandTerminalContent}
+              showsVerticalScrollIndicator
+              nestedScrollEnabled
+            >
+              {cmds.map((cmd, i) => (
+                <View
+                  key={`line-${i}`}
+                  style={styles.commandTerminalLine}
+                  // #region agent log
+                  onLayout={(e) => {
+                    const { width } = e.nativeEvent.layout;
+                    if (i === 0) {
+                      DEBUG_LOG("MessageBubble.tsx:commandTerminalLine", "First command line layout", { lineWidth: width, cmdLen: cmd.command.length }, "H3");
+                    }
+                  }}
+                  // #endregion
+                >
+                  <Text style={styles.commandTerminalPrompt} selectable={false}>
+                    $
+                  </Text>
+                  <Text style={styles.commandTerminalText} selectable numberOfLines={1} ellipsizeMode="tail">
+                    {cmd.command}
+                  </Text>
+                </View>
+              ))}
+            </ScrollView>
+          </View>
+        );
+      };
+      let cmdKey = 0;
+      commandRunSegments.forEach((seg, index) => {
+        if ((seg as CommandRunSegment).kind === "command") {
+          commandGroup.push(seg as CommandRunSegment);
+        } else {
+          flushCommandGroup(`terminal-${cmdKey++}`);
+          nodes.push(
+            <Markdown
+              key={`md-${index}`}
+              style={markdownStyles}
+              mergeStyle
+              rules={markdownRules}
+              onLinkPress={handleMarkdownLinkPress}
+            >
+              {wrapBareUrlsInMarkdown(
+                replaceHighlightWithTextColor((seg as { type: "markdown"; content: string }).content, theme.accent)
+              )}
+            </Markdown>
+          );
+        }
+      });
+      flushCommandGroup(`terminal-${cmdKey}`);
+      return <View style={styles.commandRunSection}>{nodes}</View>;
+    },
+    [
+      commandRunSegments,
+      handleMarkdownLinkPress,
+      markdownRules,
+      markdownStyles,
+      styles,
+      theme.accent,
+    ]
+  );
+
   const showProviderIcon = !isUser && !isSystem && provider;
   const ProviderIcon =
     provider === "claude" ? ClaudeIcon : provider === "codex" ? CodexIcon : GeminiIcon;
 
   return (
-    <View style={[styles.row, isUser && styles.rowUser]}>
+    <View
+      style={[styles.row, isUser && styles.rowUser]}
+      // #region agent log
+      onLayout={(e) => {
+        const { width } = e.nativeEvent.layout;
+        if (hasCommandRunSegments) {
+          DEBUG_LOG("MessageBubble.tsx:row", "Row layout", { rowWidth: width }, "H4");
+        }
+      }}
+      // #endregion
+    >
       {showProviderIcon && (
         <View style={styles.providerIconWrap}>
           <ProviderIcon size={24} />
         </View>
       )}
-      <View style={[styles.bubble, isUser && styles.bubbleUser, isSystem && styles.bubbleSystem]}>
+      <View
+        style={[
+          styles.bubble,
+          isUser && styles.bubbleUser,
+          isSystem && styles.bubbleSystem,
+          !isUser && !isSystem && styles.bubbleAssistant,
+        ]}
+        // #region agent log
+        onLayout={(e) => {
+          const { width } = e.nativeEvent.layout;
+          if (hasCommandRunSegments) {
+            DEBUG_LOG("MessageBubble.tsx:bubble", "Bubble layout", { bubbleWidth: width, hasCommands: true }, "H1");
+          }
+        }}
+        // #endregion
+      >
         {message.content && message.content.trim() !== "" ? (
           isTerminatedLabel ? (
             <Text
@@ -561,32 +802,36 @@ export function MessageBubble({ message, isTerminatedLabel, showAsTailBox, tailB
               showsHorizontalScrollIndicator={false}
               nestedScrollEnabled
             >
-              {hasRawFileActivityLinks ? (
-                renderFileActivityContent()
-              ) : (
-                <Markdown
-                  style={markdownStyles}
-                  mergeStyle
-                  rules={markdownRules}
-                  onLinkPress={handleMarkdownLinkPress}
-                >
-                  {wrapBareUrlsInMarkdown(markdownContent)}
-                </Markdown>
-              )}
+              {hasCommandRunSegments
+                ? renderCommandRunSegmentsContent()
+                : hasRawFileActivityLinks
+                  ? renderFileActivityContent()
+                  : (
+                    <Markdown
+                      style={markdownStyles}
+                      mergeStyle
+                      rules={markdownRules}
+                      onLinkPress={handleMarkdownLinkPress}
+                    >
+                      {wrapBareUrlsInMarkdown(markdownContent)}
+                    </Markdown>
+                  )}
             </ScrollView>
           ) : (
-            hasRawFileActivityLinks ? (
-              renderFileActivityContent()
-            ) : (
-              <Markdown
-                style={markdownStyles}
-                mergeStyle
-                rules={markdownRules}
-                onLinkPress={handleMarkdownLinkPress}
-              >
-                {wrapBareUrlsInMarkdown(markdownContent)}
-              </Markdown>
-            )
+            hasCommandRunSegments
+              ? renderCommandRunSegmentsContent()
+              : hasRawFileActivityLinks
+                ? renderFileActivityContent()
+                : (
+                  <Markdown
+                    style={markdownStyles}
+                    mergeStyle
+                    rules={markdownRules}
+                    onLinkPress={handleMarkdownLinkPress}
+                  >
+                    {wrapBareUrlsInMarkdown(markdownContent)}
+                  </Markdown>
+                )
           )
         ) : !isUser && !isSystem ? (
           <Text style={[styles.bubbleText, styles.bubbleTextPlaceholder]} selectable={false}>

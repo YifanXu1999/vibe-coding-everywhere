@@ -76,6 +76,7 @@ export function registerCodexHandlers(
       tool?: string;
       arguments?: unknown;
       status?: string;
+      exit_code?: number;
     } | undefined;
     if (!item) return;
     if (item.type === "agent_message" && typeof item.text === "string" && item.text) {
@@ -85,7 +86,7 @@ export function registerCodexHandlers(
       return;
     }
     if (item.type === "command_execution") {
-      // Command was already shown on item.started; only optional output/status could be added here if needed
+      // Status line (→ Completed/Failed) no longer appended to chat
       return;
     }
     if (item.type === "file_change" && Array.isArray(item.changes) && item.changes.length > 0) {
