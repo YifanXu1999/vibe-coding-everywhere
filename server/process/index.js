@@ -201,6 +201,9 @@ export function spawnProvider(socket, provider, prompt, options) {
       const turnId = options.turnId ?? 1;
       const { inputPath, outputPath } = getLlmCliIoTurnPaths(provider, sessionId, turnId);
       ioInputStream = fs.createWriteStream(inputPath, { flags: "a" });
+      if (options.systemPrompt) {
+        ioInputStream.write(`[system-prompt]\n${options.systemPrompt}\n--- end system prompt ---\n`);
+      }
       ioInputStream.write(`${commandStr}\n`);
       ioInputStream.end();
       ioOutputStream = fs.createWriteStream(outputPath, { flags: "a" });

@@ -463,7 +463,7 @@ export function createCodexAppServerSession({
       approvalMode: null,
     });
 
-    // llm-cli-input-output: log actual command (codex app-server) + turn input (prompt)
+    // llm-cli-input-output: log system prompt + command + turn input (prompt)
     try {
       const sessionId =
         options.sessionLogTimestamp ??
@@ -473,6 +473,10 @@ export function createCodexAppServerSession({
       const turnId = options.turnId ?? 1;
       const { inputPath, outputPath } = getLlmCliIoTurnPaths("codex", sessionId, turnId);
       const ioInputStream = fs.createWriteStream(inputPath, { flags: "a" });
+      const systemPrompt = getChatSystemPrompt() || "";
+      if (systemPrompt) {
+        ioInputStream.write(`[system-prompt]\n${systemPrompt}\n--- end system prompt ---\n`);
+      }
       const fullCommand = codexAppServerCommandStr ?? "codex app-server";
       ioInputStream.write(`${fullCommand}\n`);
       ioInputStream.write(`${prompt}\n`);
